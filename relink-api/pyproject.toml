@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "relink-studio-api"
+version = "0.1.0"
+description = "JSON API + persistence backend for Relink Studio (record-linkage review tool)."
+requires-python = ">=3.10"
+dependencies = [
+    "Flask==3.0.3",
+    "Flask-Cors==4.0.1",
+    "pandas==2.2.2",
+    "openpyxl==3.1.5",
+    "requests==2.32.3",
+    "Werkzeug==3.0.3",
+]
+
+[project.optional-dependencies]
+splink = ["splink==4.0.16"]
+# linktransformer intentionally omitted from extras -- see requirements-optional.txt
+dev = ["pytest==8.3.2"]
+
+[project.scripts]
+relink-studio-api = "app.cli:main"
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

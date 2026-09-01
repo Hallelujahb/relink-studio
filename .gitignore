@@ -1,0 +1,59 @@
+# --- Python (relink-api) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / coverage caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Backup and editor scratch files
+*.bak
+*.swp
+*~
+
+# Logs
+*.log
+
+# relink-api runtime data: keep the folders (via .gitkeep), ignore what lands in them
+relink-api/data/*.sqlite3
+relink-api/uploads/*
+!relink-api/uploads/.gitkeep
+!relink-api/data/.gitkeep
+
+# --- Node / frontend (relink-studio) ---
+relink-studio/node_modules/
+relink-studio/dist/
+relink-studio/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Env files: never commit secrets/config ---
+.env
+.env.*
+!.env.example
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+
+# --- Editor ---
+.vscode/
+.idea/
+
+# --- Bundled sample datasets not meant to be published ---
+test-dataset/*.csv

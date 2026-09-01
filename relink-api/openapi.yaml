@@ -1,0 +1,355 @@
+openapi: 3.0.3
+info:
+  title: Relink Studio API
+  version: "0.1.0"
+  description: >
+    JSON API + persistence backend for Relink Studio, a record-linkage
+    review tool. See README.md for what's implemented vs. stubbed/optional
+    (Methods C and E in particular).
+servers:
+  - url: http://127.0.0.1:5000/api
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Optional. Only enforced where a route says so, or globally when
+        RELINK_REQUIRE_AUTH=1 is set server-side. See POST /auth/login.
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    MethodResult:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+        targetId: { type: string, nullable: true }
+        score: { type: number, nullable: true }
+    ReviewRow:
+      type: object
+      properties:
+        sourceId: { type: string }
+        sourceName: { type: string }
+        kind:
+          type: string
+          enum: [consensus, low_confidence, type_leak, collision, geometry_suspect, unmatched]
+        approved: { type: boolean }
+        chosenMethod: { type: string, nullable: true }
+        collisionPartner: { type: string, nullable: true }
+        methods:
+          type: object
+          properties:
+            A: { $ref: '#/components/schemas/MethodResult' }
+            B: { $ref: '#/components/schemas/MethodResult' }
+            C: { $ref: '#/components/schemas/MethodResult' }
+            D: { $ref: '#/components/schemas/MethodResult' }
+            E: { $ref: '#/components/schemas/MethodResult' }
+        note: { type: string, nullable: true }
+        submittedBy: { type: string, nullable: true }
+        approvedBy: { type: string, nullable: true }
+    ProjectConfig:
+      type: object
+      description: Matches the frontend's buildConfigObject() shape.
+      required: [project_name, source, target, methods]
+      properties:
+        project_name: { type: string }
+        source:
+          type: object
+          required: [id_column, match_column]
+          properties:
+            id_column: { type: string }
+            match_column: { type: string }
+            hierarchy: { type: string }
+        target:
+          type: object
+          required: [id_column, match_column]
+          properties:
+            id_column: { type: string }
+            match_column: { type: string }
+            type_column: { type: string }
+            type_expected: { type: string }
+        methods:
+          type: array
+          items:
+            type: string
+            enum: [fuzzy, recordlinkage, linktransformer, geometry_corroboration, splink]
+        thresholds:
+          type: object
+          properties:
+            auto_approve: { type: number }
+            needs_review: { type: number }
+        matching:
+          type: object
+          properties:
+            blocking_floor: { type: number }
+            keep_digits: { type: boolean }
+            strip_parentheticals: { type: boolean }
+            strip_suffix_words: { type: boolean }
+            case_sensitive: { type: boolean }
+        safety:
+          type: object
+          properties:
+            collision_guard: { type: boolean }
+            auto_downgrade_ties: { type: boolean }
+            require_approval_hierarchy: { type: boolean }
+
+paths:
+  /auth/register:
+    post:
+      summary: Create a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, minLength: 8 }
+                role: { type: string, enum: [reviewer, lead], default: reviewer }
+      responses:
+        '201': { description: Created }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /auth/login:
+    post:
+      summary: Log in, get a bearer token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200': { description: OK }
+        '401': { description: Invalid credentials }
+
+  /upload:
+    post:
+      summary: Upload and parse a source/target file (csv, xlsx, xls, geojson, json)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201': { description: Parsed successfully }
+        '400': { description: Bad file, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '413': { description: File too large }
+
+  /upload/{file_id}:
+    delete:
+      summary: Delete an uploaded file (fails if a project still references it)
+      parameters:
+        - { name: file_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Deleted }
+        '404': { description: Not found }
+        '409': { description: Still referenced by a project }
+
+  /projects:
+    post:
+      summary: Create a project from a config + two already-uploaded file IDs
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [config, source_file_id, target_file_id]
+              properties:
+                config: { $ref: '#/components/schemas/ProjectConfig' }
+                source_file_id: { type: string }
+                target_file_id: { type: string }
+      responses:
+        '201': { description: Created }
+        '400': { description: Bad request }
+
+  /projects/{project_id}:
+    get:
+      summary: Get project metadata + config
+      parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
+
+  /projects/{project_id}/config:
+    get:
+      summary: Get the project's config
+      parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '404': { description: Not found } }
+    post:
+      summary: Replace the project's config
+      parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectConfig' }
+      responses: { '200': { description: OK }, '404': { description: Not found } }
+
+  /projects/{project_id}/run:
+    post:
+      summary: Start a background matching job for this project
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '202': { description: Job started }
+        '404': { description: Project not found }
+
+  /projects/{project_id}/jobs/{job_id}:
+    get:
+      summary: Poll job status
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+        - { name: job_id, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: OK }, '404': { description: Not found } }
+
+  /projects/{project_id}/jobs/{job_id}/stream:
+    get:
+      summary: Server-Sent Events stream of job status (live progress)
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+        - { name: job_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: text/event-stream of job status objects
+          content:
+            text/event-stream: { schema: { type: string } }
+
+  /projects/{project_id}/review:
+    get:
+      summary: Paginated, filterable, searchable review queue
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+        - { name: filter, in: query, schema: { type: string }, description: "all | approved | consensus | low_confidence | type_leak | collision | geometry_suspect | unmatched" }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, default: 50 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows: { type: array, items: { $ref: '#/components/schemas/ReviewRow' } }
+                  total: { type: integer }
+                  page: { type: integer }
+                  page_size: { type: integer }
+
+  /projects/{project_id}/review/{source_id}:
+    patch:
+      summary: Approve/reject/choose-method for one row (single-step, no hierarchy)
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+        - { name: source_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                approved: { type: boolean }
+                chosen_method: { type: string }
+                note: { type: string }
+      responses: { '200': { description: OK }, '404': { description: Not found } }
+
+  /projects/{project_id}/review/{source_id}/submit:
+    post:
+      summary: Step 1 of the optional approval hierarchy - mark a row submitted
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+        - { name: source_id, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: OK }, '401': { description: Auth required }, '404': { description: Not found } }
+
+  /projects/{project_id}/review/{source_id}/approve:
+    post:
+      summary: Step 2 of the optional approval hierarchy - requires 'lead' role
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+        - { name: source_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: Not submitted yet (when hierarchy is required) }
+        '403': { description: Caller is not a lead }
+
+  /projects/{project_id}/review/bulk:
+    post:
+      summary: Bulk approve/reject a set of rows; returns an undo_token
+      parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, source_ids]
+              properties:
+                action: { type: string, enum: [approve, reject] }
+                source_ids: { type: array, items: { type: string } }
+      responses: { '200': { description: OK } }
+
+  /projects/{project_id}/review/undo:
+    post:
+      summary: Revert all decisions made under one undo_token
+      parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [undo_token]
+              properties: { undo_token: { type: string } }
+      responses: { '200': { description: OK }, '404': { description: Unknown/used token } }
+
+  /projects/{project_id}/export:
+    post:
+      summary: Export approved rows as CSV
+      parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv: { schema: { type: string, format: binary } }
+
+  /projects/{project_id}/audit:
+    get:
+      summary: Paginated real audit log for the project
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, default: 50 } }
+      responses: { '200': { description: OK } }
+
+  /geocode:
+    post:
+      summary: Single-row Nominatim lookup (rate-limited to 1 req/sec; no bulk input)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties: { query: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: Missing/invalid query, or a list was sent }
+        '502': { description: Nominatim request itself failed }

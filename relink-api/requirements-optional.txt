@@ -1,0 +1,11 @@
+# Optional -- only needed if you enable Method E ("splink") in a project's
+# config.methods. The base API works fully without this installed; Method
+# E just returns a clear 'Method E requires...' error until it is.
+splink==4.0.16
+
+# Optional -- only needed for Method C ("linktransformer"). Pulls in torch,
+# faiss, and sentence-transformers (large download, needs disk + Hugging
+# Face Hub network access). NOT installed or run in this project's own
+# dev/test environment -- see app/matching_linktransformer.py docstring
+# for exactly what was and wasn't verified.
+# linktransformer
