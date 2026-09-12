@@ -124,6 +124,27 @@ def test_combine_methods_auto_downgrade_ties():
     assert rows[0]["approved"] is False
 
 
+def test_combine_methods_chosen_method_reflects_actual_best_scorer():
+    # Regression test: a low-scoring Method A candidate and a high-scoring
+    # Method E candidate for the same row must not let export/UI default to
+    # A's (wrong) target just because A comes first alphabetically -- the
+    # method that actually triggered auto-approval must be recorded.
+    method_results = {
+        "A": {"1": {"name": "Wrong Weak Match", "targetId": "999", "score": 0.30}},
+        "E": {"1": {"name": "Correct Strong Match", "targetId": "101", "score": 0.97}},
+    }
+    target = [
+        {"tid": "999", "tname": "Wrong Weak Match"},
+        {"tid": "101", "tname": "Correct Strong Match"},
+    ]
+    config = {"thresholds": {"auto_approve": 0.9, "needs_review": 0.5}, "safety": {}}
+    rows = matching.combine_methods(
+        [{"id": "1", "name": "Springfield Township"}], "id", "name", method_results,
+        target, "tid", None, None, config)
+    assert rows[0]["approved"] is True
+    assert rows[0]["chosenMethod"] == "E"
+
+
 def test_combine_methods_unmatched_when_no_candidates():
     config = {"thresholds": {"auto_approve": 0.9, "needs_review": 0.5}, "safety": {}}
     rows = matching.combine_methods(

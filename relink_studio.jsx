@@ -63,15 +63,19 @@ const TOKENS_CSS = `
     --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.25);
   }
   .rls[data-theme="light"] {
-    --bg: #E9EBEF; --surface: #F9FAFB; --surface-2: #EFF1F4; --surface-hover: #E3E6EB;
-    --border: #DBDEE4; --border-strong: #C2C7D0;
-    --text: #2A2E36; --text-muted: #667085;
-    --primary: #2563EB; --primary-hover: #1D4ED8; --primary-soft: #E4ECFD;
-    --success: #16A34A; --success-soft: #E8F7EE;
-    --warning: #D97706; --warning-soft: #FDF3E1;
-    --danger: #DC2626; --danger-soft: #FCEAEA;
-    --method-a: #2563EB; --method-b: #0D9488; --method-c: #7C3AED; --method-d: #C2410C; --method-e: #4338CA;
-    --shadow: 0 1px 2px rgba(20,20,30,0.04), 0 4px 10px rgba(20,20,30,0.04);
+    /* Softer than a stark cool-white: warmer, lower-contrast "paper" gray
+       instead of near-pure white surfaces on near-white background, plus
+       a warm off-black for text instead of near-pure black. Meaningfully
+       easier on the eyes for long review sessions. */
+    --bg: #EAE8E2; --surface: #F7F6F1; --surface-2: #EFEDE6; --surface-hover: #E4E2D9;
+    --border: #DCDACF; --border-strong: #C7C4B5;
+    --text: #33322C; --text-muted: #726F62;
+    --primary: #2563EB; --primary-hover: #1D4ED8; --primary-soft: #E3E9F9;
+    --success: #16A34A; --success-soft: #E7F3EA;
+    --warning: #B4620A; --warning-soft: #F7EEE0;
+    --danger: #C4331F; --danger-soft: #F6E7E3;
+    --method-a: #2563EB; --method-b: #0D9488; --method-c: #7C3AED; --method-d: #B4620A; --method-e: #4338CA;
+    --shadow: 0 1px 2px rgba(40,35,20,0.05), 0 4px 10px rgba(40,35,20,0.05);
   }
   .rls { background: var(--bg); color: var(--text); }
   .surf { background: var(--surface); border-color: var(--border); }
@@ -102,12 +106,30 @@ const TOKENS_CSS = `
   input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   input[type="number"] { -moz-appearance: textfield; }
   th { text-align: left; font-weight: 600; }
-  .rls-grid-review { display: grid; grid-template-columns: 270px 1fr 350px; height: 100%; }
-  .rls-grid-approve { display: grid; grid-template-columns: 1fr 380px; height: 100%; }
+  .rls-grid-review { display: grid; grid-template-columns: 270px 1fr 350px; height: 100%; min-height: 0; }
   @media (max-width: 900px) {
     .rls-grid-review { grid-template-columns: 1fr; height: auto; }
-    .rls-grid-approve { grid-template-columns: 1fr; height: auto; }
   }
+
+  /* Themed scrollbars -- default browser scrollbars are always white/gray
+     regardless of theme, which looks out of place against a dark surface.
+     Firefox via scrollbar-color/-width, WebKit/Chromium via the
+     pseudo-elements below; both keyed off the same theme variables so
+     they track dark/light automatically. */
+  .rls, .rls * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  .rls ::-webkit-scrollbar { width: 10px; height: 10px; }
+  .rls ::-webkit-scrollbar-track { background: transparent; }
+  .rls ::-webkit-scrollbar-corner { background: transparent; }
+  .rls ::-webkit-scrollbar-thumb {
+    background-color: var(--border-strong);
+    border-radius: 999px;
+    border: 2px solid var(--surface);
+    background-clip: padding-box;
+  }
+  .rls ::-webkit-scrollbar-thumb:hover { background-color: var(--text-muted); background-clip: padding-box; }
 `;
 
 function Logo() {
@@ -215,9 +237,9 @@ function ThresholdSlider({ label, value, setValue, accent }) {
   );
 }
 
-const TAB_LABELS = ["Sources & shape", "Hierarchy & methods", "Safety & rules", "Review queue", "Approve & finalize", "Export & audit"];
+const TAB_LABELS = ["Sources & shape", "Hierarchy & methods", "Safety & rules", "Review & finalize", "Export & audit"];
 
-function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun }) {
+function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged }) {
   return (
     <>
       <div className="surf border-b flex items-center justify-between px-5 py-3">
@@ -251,18 +273,33 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
         </div>
       </div>
       <div className="surf border-b flex items-center px-5 py-2.5 gap-2 overflow-x-auto">
-        {TAB_LABELS.map((label, i) => (
-          <div key={label} className="flex items-center gap-2">
-            <div
-              onClick={() => setActiveTab(i)}
-              className="tab-pill text-xs font-medium px-3.5 py-1.5 whitespace-nowrap"
-              style={i === activeTab ? { background: "var(--primary-soft)", color: "var(--primary)", boxShadow: "inset 0 0 0 1px var(--primary)" } : { color: "var(--text-muted)" }}
-            >
-              {label}
+        {TAB_LABELS.map((label, i) => {
+          // The export tab produces the authoritative CSV, which only
+          // makes sense once review decisions are merged & finalized --
+          // jumping straight there before that would let you download a
+          // partial/undecided set. Everything else stays freely navigable.
+          const isExportTab = i === TAB_LABELS.length - 1;
+          const locked = isExportTab && !merged;
+          return (
+            <div key={label} className="flex items-center gap-2">
+              <div
+                onClick={() => { if (locked) { setToast('Merge and finalize your review decisions first (tab "Review & finalize").'); return; } setActiveTab(i); }}
+                className="tab-pill text-xs font-medium px-3.5 py-1.5 whitespace-nowrap"
+                title={locked ? "Locked until you merge and finalize your review decisions." : undefined}
+                style={
+                  i === activeTab
+                    ? { background: "var(--primary-soft)", color: "var(--primary)", boxShadow: "inset 0 0 0 1px var(--primary)" }
+                    : locked
+                    ? { color: "var(--text-muted)", opacity: 0.5, cursor: "not-allowed" }
+                    : { color: "var(--text-muted)" }
+                }
+              >
+                {label}{locked ? " \u{1F512}" : ""}
+              </div>
+              {i < TAB_LABELS.length - 1 && <span className="muted text-xs">&rarr;</span>}
             </div>
-            {i < TAB_LABELS.length - 1 && <span className="muted text-xs">&rarr;</span>}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </>
   );
@@ -359,7 +396,12 @@ function parseUploadedFile(file, onParsed, onError) {
           return;
         }
         const columns = features.length ? Object.keys(features[0].properties || {}) : [];
-        onParsed({ columns, rowCount: features.length, format: "geojson", geometry: features.map((f) => f.geometry) });
+        // Keep each feature's properties alongside its geometry, in the
+        // same order -- needed to look a feature up by whichever column
+        // ends up chosen as the ID column (that choice isn't known yet
+        // at parse time), rather than assuming the ID value happens to
+        // equal the feature's raw array position.
+        onParsed({ columns, rowCount: features.length, format: "geojson", geometry: features.map((f) => f.geometry), rows: features.map((f) => f.properties || {}) });
       } catch (e) {
         onError(new Error(`Invalid JSON (${e.message}).`));
       }
@@ -468,7 +510,7 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
     parseUploadedFile(
       f,
       async (parsed) => {
-        setFile({ name: f.name, format: parsed.format, rowCount: parsed.rowCount, columns: parsed.columns, geometry: parsed.geometry, fileId: null, uploadError: null });
+        setFile({ name: f.name, format: parsed.format, rowCount: parsed.rowCount, columns: parsed.columns, geometry: parsed.geometry, geometryRows: parsed.rows || null, fileId: null, uploadError: null });
         setIdColumn(parsed.columns[0] || "");
         setMatchColumn(parsed.columns[1] || parsed.columns[0] || "");
         setHierarchy([]);
@@ -477,7 +519,7 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
         // backend can run the matching pipeline against.
         try {
           const uploaded = await uploadFileToBackend(f);
-          setFile({ name: f.name, format: uploaded.format, rowCount: uploaded.row_count, columns: uploaded.columns, geometry: parsed.geometry, fileId: uploaded.file_id, uploadError: null });
+          setFile({ name: f.name, format: uploaded.format, rowCount: uploaded.row_count, columns: uploaded.columns, geometry: parsed.geometry, geometryRows: parsed.rows || null, fileId: uploaded.file_id, uploadError: null });
           setIsParsing(false);
           setToast(`Uploaded ${f.name} to the backend: ${uploaded.columns.length} columns, ${uploaded.row_count} rows.`);
         } catch (err) {
@@ -772,28 +814,28 @@ function TabHierarchyMethods(props) {
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Matching methods</div>
         <div className="grid grid-cols-3 gap-3">
           <MethodCard
-            name="Method A" engine="difflib (character fuzzy)" accent="var(--method-a)"
+            name={METHOD_META.A.label} engine="difflib (character fuzzy)" accent={METHOD_META.A.accent}
             description="Best default for spelling variants and minor formatting differences. No extra dependencies."
             enabled={methodA} onToggle={() => setMethodA(!methodA)}
           />
           <MethodCard
-            name="Method B" engine="recordlinkage (Jaro-Winkler)" accent="var(--method-b)"
+            name={METHOD_META.B.label} engine="recordlinkage (Jaro-Winkler)" accent={METHOD_META.B.accent}
             description="A second, differently tuned character distance opinion for corroboration."
             enabled={methodB} onToggle={() => setMethodB(!methodB)}
           />
           <MethodCard
-            name="Method C" engine="linktransformer (embeddings)" accent="var(--method-c)"
+            name={METHOD_META.C.label} engine="linktransformer (embeddings)" accent={METHOD_META.C.accent}
             description="Semantic matching, good for meaning gaps rather than spelling gaps."
             warning="Weak on close spelling variants. Can repeatedly collapse distinct records onto the same wrong neighbor. Recommended as a secondary signal, not primary."
             enabled={methodC} onToggle={() => setMethodC(!methodC)}
           />
           <MethodCard
-            name="Method D" engine="geometry corroboration (lat/lon or polygon)" accent="var(--method-d)"
+            name={METHOD_META.D.label} engine="geometry corroboration (lat/lon or polygon)" accent={METHOD_META.D.accent}
             description="Not a name-scorer: flags a candidate as suspect when its coordinates sit far from the source record's location, even if the name matched well. Needs latitude/longitude columns or GeoJSON geometry on both sides."
             enabled={methodD} onToggle={() => setMethodD(!methodD)}
           />
           <MethodCard
-            name="Method E" engine="Splink (probabilistic, Fellegi-Sunter)" accent="var(--method-e)"
+            name={METHOD_META.E.label} engine="Splink (probabilistic, Fellegi-Sunter)" accent={METHOD_META.E.accent}
             description="Learns how much weight each field should carry from your data instead of using a fixed similarity score. Worth it once you're linking tens of thousands of rows or more; for smaller runs, the methods above are simpler and just as effective."
             enabled={methodE} onToggle={() => setMethodE(!methodE)}
           />
@@ -974,7 +1016,7 @@ function AlertBanner({ row }) {
         <div>
           <div className="text-sm font-medium" style={{ color: "var(--danger)" }}>ID collision detected</div>
           <div className="text-sm muted mt-0.5">
-            Target <span className="font-mono">{row.methods.A.targetId}</span> is also claimed by row {row.collisionPartner}. Auto-approve is blocked until you resolve which row this ID actually belongs to.
+            Target <span className="font-mono">{bestCandidate(row).targetId}</span> is also claimed by row {row.collisionPartner}. Auto-approve is blocked until you resolve which row this ID actually belongs to.
           </div>
         </div>
       </div>
@@ -1071,13 +1113,93 @@ const FILTERS = [
 
 const PAGE_SIZE = 50;
 
-function TabReviewQueue(props) {
-  const { rows, selectedId, setSelectedId, note, setNote, setToast, sourceGeometry, patchReviewRow, bulkReview, undoReview, geocodeLookup } = props;
+/* ---------------------------------------------------------------------- */
+/* Method registry -- single source of truth for method identity.        */
+/* Nothing downstream should hardcode "A"/"B"/"C": the review UI reads   */
+/* whichever methods are actually enabled for the project and renders    */
+/* however many of them that turns out to be (1, 2, 5, whatever).        */
+/* Method D (geometry) is a corroboration flag, not a competing name     */
+/* candidate -- it never has a targetId, so it's excluded from the       */
+/* comparison columns and from "best candidate" fallbacks below.         */
+/* ---------------------------------------------------------------------- */
+const METHOD_META = {
+  A: { key: "A", label: "Fuzzy match", shortLabel: "Fuzzy", engine: "difflib", accent: "var(--method-a)" },
+  B: { key: "B", label: "Token overlap", shortLabel: "Token overlap", engine: "recordlinkage approx.", accent: "var(--method-b)" },
+  C: { key: "C", label: "Semantic embedding", shortLabel: "Semantic", engine: "linktransformer", accent: "var(--method-c)" },
+  D: { key: "D", label: "Geometry check", shortLabel: "Geometry", engine: "geometry corroboration", accent: "var(--method-d)" },
+  E: { key: "E", label: "Probabilistic (Splink)", shortLabel: "Probabilistic", engine: "Fellegi-Sunter", accent: "var(--method-e)" },
+};
+const METHOD_KEY_ORDER = ["A", "B", "C", "D", "E"];
+const CANDIDATE_METHOD_KEYS = ["A", "B", "C", "E"]; // methods that can actually name a target (excludes D)
+
+// Which method keys are enabled for this project, in a stable display order.
+function enabledMethodKeys(props, { candidatesOnly = false } = {}) {
+  const flags = { A: props.methodA, B: props.methodB, C: props.methodC, D: props.methodD, E: props.methodE };
+  const pool = candidatesOnly ? CANDIDATE_METHOD_KEYS : METHOD_KEY_ORDER;
+  return pool.filter((k) => flags[k]);
+}
+
+// The best (first non-null, by declared method order) candidate a row got,
+// restricted to whichever candidate-producing methods are actually enabled.
+// Falls back to scanning every candidate method if the caller doesn't know
+// which were enabled (e.g. an already-merged row), so a row is never
+// silently dropped from the final answer.
+function bestCandidate(row, keys) {
+  // Highest-scoring candidate among whichever candidate-producing methods
+  // are in play, not just the first one in fixed A/B/C/E order -- a later
+  // method (e.g. E) can easily outscore an earlier one (e.g. A), and the
+  // "best" match should reflect that instead of alphabetical preference.
+  const pool = (keys && keys.length ? keys : CANDIDATE_METHOD_KEYS).filter((k) => CANDIDATE_METHOD_KEYS.includes(k));
+  let best = null;
+  for (const k of pool) {
+    const m = row.methods[k];
+    if (m && m.name && m.score !== null && (best === null || m.score > best.score)) {
+      best = { key: k, ...m };
+    }
+  }
+  if (best) return best;
+  // Fallback: a candidate with a name but no score (shouldn't normally
+  // happen), take the first one found so a row is never silently dropped.
+  for (const k of pool) {
+    const m = row.methods[k];
+    if (m && m.name) return { key: k, ...m };
+  }
+  return { key: null, name: null, targetId: null, score: null };
+}
+
+/* ---------------------------------------------------------------------- */
+/* Tab 4: Review & finalize                                              */
+/* Previously two tabs ("Review queue" and "Approve & finalize") that did */
+/* largely the same job through two different mechanisms -- one row      */
+/* immediately writes to the backend as you decide it, the other staged  */
+/* a second round of approve/reject on whatever was left. Folded into    */
+/* one tab: every decision (choosing a method, or rejecting) writes      */
+/* immediately and is tracked as "decided"; "Merge and finalize" is just */
+/* the final lock-in step once nothing is left undecided. The summary,   */
+/* bulk actions, and merge button live in a footer that's always in      */
+/* view (sticky), not something you scroll down the sidebar to find.     */
+/* ---------------------------------------------------------------------- */
+
+function TabReviewAndFinalize(props) {
+  const {
+    rows, selectedId, setSelectedId, note, setNote, setToast, sourceGeometry, sourceGeometryRows, sourceIdCol,
+    patchReviewRow, bulkReview, undoReview, geocodeLookup,
+    pendingDecisions, setPendingDecisions, merged, setMerged, finalRows,
+  } = props;
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
 
+  const candidateKeys = enabledMethodKeys(props, { candidatesOnly: true });
   const selected = rows.find((r) => r.sourceId === selectedId) || rows[0];
+
+  // A row counts as "decided" once it's approved (auto or by picking a
+  // method) or has been explicitly rejected. Rejecting doesn't change
+  // `approved` (it was already false), so that decision is tracked
+  // locally in pendingDecisions -- the same map used for the merge gate.
+  const isDecided = (r) => r.approved || pendingDecisions[r.sourceId] === "rejected";
+  const undecidedCount = rows.filter((r) => !isDecided(r)).length;
+  const decidedCount = rows.length - undecidedCount;
 
   const counts = useMemo(() => ({
     all: rows.length,
@@ -1107,11 +1229,13 @@ function TabReviewQueue(props) {
 
   function chooseMethod(methodKey) {
     patchReviewRow(selected.sourceId, { chosen_method: methodKey, approved: true });
-    setToast(`Row ${selected.sourceId}: Method ${methodKey} selected as final match.`);
+    setPendingDecisions((prev) => ({ ...prev, [selected.sourceId]: "approved" }));
+    setToast(`Row ${selected.sourceId}: ${METHOD_META[methodKey]?.label || methodKey} selected as final match.`);
   }
 
   function rejectRow() {
     patchReviewRow(selected.sourceId, { approved: false, chosen_method: null });
+    setPendingDecisions((prev) => ({ ...prev, [selected.sourceId]: "rejected" }));
     setToast(`Row ${selected.sourceId} rejected. Will be written as unmatched.`);
   }
 
@@ -1123,6 +1247,11 @@ function TabReviewQueue(props) {
     });
     if (targets.length === 0) { setToast("No unapproved consensus rows to approve."); return; }
     const undoToken = await bulkReview("approve", targets.map((r) => r.sourceId));
+    setPendingDecisions((prev) => {
+      const next = { ...prev };
+      targets.forEach((r) => { next[r.sourceId] = "approved"; });
+      return next;
+    });
     setToast({
       message: `Approved ${targets.length} row(s) with full method consensus.`,
       undo: undoToken ? () => { undoReview(undoToken); setToast("Undone."); } : undefined,
@@ -1133,22 +1262,51 @@ function TabReviewQueue(props) {
     const targets = rows.filter((r) => r.approved && Object.values(r.methods).some((m) => m.score !== null && m.score < 0.8));
     if (targets.length === 0) { setToast("No approved rows below 0.80 to reject."); return; }
     const undoToken = await bulkReview("reject", targets.map((r) => r.sourceId));
+    setPendingDecisions((prev) => {
+      const next = { ...prev };
+      targets.forEach((r) => { next[r.sourceId] = "rejected"; });
+      return next;
+    });
     setToast({
       message: `Rejected ${targets.length} approved row(s) that had a method score below 0.80.`,
       undo: undoToken ? () => { undoReview(undoToken); setToast("Undone."); } : undefined,
     });
   }
 
+  function approveAllRemaining() {
+    const targets = rows.filter((r) => !isDecided(r));
+    if (targets.length === 0) { setToast("Nothing left undecided."); return; }
+    targets.forEach((r) => {
+      const best = bestCandidate(r, candidateKeys);
+      if (best.key) patchReviewRow(r.sourceId, { chosen_method: best.key, approved: true });
+    });
+    setPendingDecisions((prev) => {
+      const next = { ...prev };
+      targets.forEach((r) => { next[r.sourceId] = "approved"; });
+      return next;
+    });
+    setToast(`Approved ${targets.length} remaining row(s) using each row's best available candidate.`);
+  }
+
+  async function mergeAndFinalize() {
+    if (undecidedCount > 0) {
+      setToast(`${undecidedCount} row(s) still undecided. Approve, reject, or use "Approve all remaining" first.`);
+      return;
+    }
+    setMerged(true);
+    setToast("Merged. Final answer ready.");
+  }
+
   function goToNextUnreviewed() {
     const idx = filteredRows.findIndex((r) => r.sourceId === selected.sourceId);
     const rest = filteredRows.slice(idx + 1);
     const wrapped = filteredRows.slice(0, idx + 1);
-    const next = [...rest, ...wrapped].find((r) => !r.approved);
+    const next = [...rest, ...wrapped].find((r) => !isDecided(r));
     if (next) {
       setSelectedId(next.sourceId);
       setPage(Math.floor(filteredRows.indexOf(next) / PAGE_SIZE));
     } else {
-      setToast("No unreviewed rows left in the current filter.");
+      setToast("No undecided rows left in the current filter.");
     }
   }
 
@@ -1163,7 +1321,60 @@ function TabReviewQueue(props) {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const realGeometry = selected && sourceGeometry && sourceGeometry[Number(selected.sourceId)] ? sourceGeometry[Number(selected.sourceId)] : null;
+  // Map source_id -> geometry index using the actual ID column values, not
+  // the feature's raw position in the file. The two only coincide when the
+  // ID column happens to be sequential and 0-based, which isn't a safe
+  // assumption for real IDs (facility codes, non-sequential numbers, etc).
+  const geometryIndexBySourceId = useMemo(() => {
+    if (!sourceGeometryRows || !sourceIdCol) return null;
+    const map = {};
+    sourceGeometryRows.forEach((row, i) => {
+      const idVal = row[sourceIdCol];
+      if (idVal !== undefined && idVal !== null) map[String(idVal)] = i;
+    });
+    return map;
+  }, [sourceGeometryRows, sourceIdCol]);
+
+  const realGeometry = useMemo(() => {
+    if (!selected || !sourceGeometry) return null;
+    const idx = geometryIndexBySourceId ? geometryIndexBySourceId[String(selected.sourceId)] : undefined;
+    return idx !== undefined ? sourceGeometry[idx] || null : null;
+  }, [selected, sourceGeometry, geometryIndexBySourceId]);
+
+  if (merged) {
+    return (
+      <div className="p-5 max-w-4xl mx-auto">
+        <div className="card surf border p-5">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-sm font-semibold">Final linked answer</div>
+            <div className="text-xs muted">Use the Export &amp; audit tab for the authoritative CSV.</div>
+          </div>
+          <div className="text-xs muted mb-4">{finalRows.length} rows. Clean and process-free: just the source and its final match.</div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b b">
+                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Source ID</th>
+                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Source name</th>
+                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Linked target</th>
+                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Target ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {finalRows.map((r) => (
+                <tr key={r.sourceId} className="border-b b">
+                  <td className="py-2.5 font-mono text-xs muted">{r.sourceId}</td>
+                  <td className="py-2.5 font-medium">{r.sourceName}</td>
+                  <td className="py-2.5">{r.target}</td>
+                  <td className="py-2.5 font-mono text-xs muted">{r.targetId}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button onClick={() => setMerged(false)} className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-4">&larr; Unmerge and keep editing</button>
+        </div>
+      </div>
+    );
+  }
 
   if (!rows.length || !selected) {
     return (
@@ -1180,267 +1391,149 @@ function TabReviewQueue(props) {
   }
 
   return (
-    <div className="rls-grid-review">
-      <div className="surf border-r flex flex-col">
-        <div className="p-3 border-b b">
-          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter rows..." className="w-full surf2 border b rounded-md text-sm px-3 py-2" style={{ color: "var(--text)" }} />
-        </div>
-        <div className="flex flex-col gap-1 p-2 border-b b">
-          {FILTERS.map((f) => (
-            <button key={f.key} onClick={() => setFilter(f.key)} className="btn flex items-center justify-between text-sm px-3 py-2" style={filter === f.key ? { background: "var(--primary-soft)", color: "var(--primary)" } : { color: "var(--text)" }}>
-              <span>{f.label}</span>
-              <span className="text-xs muted">{counts[f.key]}</span>
-            </button>
-          ))}
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {pagedRows.map((r) => (
-            <div key={r.sourceId} onClick={() => setSelectedId(r.sourceId)} className="cursor-pointer px-3.5 py-3 border-b b" style={r.sourceId === selectedId ? { background: "var(--primary-soft)" } : {}}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs muted font-mono">#{r.sourceId}</span>
-                <KindBadge kind={r.kind} />
-              </div>
-              <div className="text-sm font-medium">{r.sourceName}</div>
-              <div className="text-xs muted mt-0.5">{r.hierarchy}</div>
-            </div>
-          ))}
-          {filteredRows.length === 0 && <div className="p-4 text-sm muted">No rows match this filter.</div>}
-        </div>
-        {pageCount > 1 && (
-          <div className="flex items-center justify-between px-3 py-2 border-t b text-xs">
-            <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={safePage === 0} className="btn btn-ghost px-2 py-1" style={safePage === 0 ? { opacity: 0.4, cursor: "not-allowed" } : {}}>&larr; Prev</button>
-            <span className="muted">
-              {safePage * PAGE_SIZE + 1}&ndash;{Math.min(filteredRows.length, (safePage + 1) * PAGE_SIZE)} of {filteredRows.length}
-            </span>
-            <button onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} disabled={safePage === pageCount - 1} className="btn btn-ghost px-2 py-1" style={safePage === pageCount - 1 ? { opacity: 0.4, cursor: "not-allowed" } : {}}>Next &rarr;</button>
+    <div className="flex flex-col" style={{ height: "100%" }}>
+      <div className="rls-grid-review" style={{ flex: 1, minHeight: 0 }}>
+        <div className="surf border-r flex flex-col">
+          <div className="p-3 border-b b">
+            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter rows..." className="w-full surf2 border b rounded-md text-sm px-3 py-2" style={{ color: "var(--text)" }} />
           </div>
-        )}
-      </div>
-
-      <div className="p-5 overflow-y-auto" style={{ background: "var(--bg)" }}>
-        <div className="flex items-center justify-between mb-3">
-          <AlertBanner row={selected} />
-        </div>
-        <div className="flex justify-end -mt-3 mb-3">
-          <button onClick={goToNextUnreviewed} className="btn btn-ghost text-xs font-medium px-3 py-1.5">
-            Next unreviewed row (N) &rarr;
-          </button>
-        </div>
-
-        <div className="card surf border p-4 mb-4">
-          <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Source row</div>
-          <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
-            <div><span className="muted">source_id</span> &nbsp; <span className="font-mono">{selected.sourceId}</span></div>
-            <div><span className="muted">name</span> &nbsp; {selected.sourceName}</div>
-            <div><span className="muted">hierarchy</span> &nbsp; {selected.hierarchy}</div>
-            <div><span className="muted">approved</span> &nbsp; {selected.approved ? "yes" : "no"}</div>
+          <div className="flex flex-col gap-1 p-2 border-b b">
+            {FILTERS.map((f) => (
+              <button key={f.key} onClick={() => setFilter(f.key)} className="btn flex items-center justify-between text-sm px-3 py-2" style={filter === f.key ? { background: "var(--primary-soft)", color: "var(--primary)" } : { color: "var(--text)" }}>
+                <span>{f.label}</span>
+                <span className="text-xs muted">{counts[f.key]}</span>
+              </button>
+            ))}
           </div>
-        </div>
-
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-xs font-semibold muted uppercase tracking-wide">Tri-method comparison</div>
-          <ConsensusIndicator row={selected} />
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <MethodColumn label="Method A" engine="difflib" data={selected.methods.A} accent="var(--method-a)" isChosen={selected.chosenMethod === "A"} onChoose={() => chooseMethod("A")} />
-          <MethodColumn label="Method B" engine="recordlinkage" data={selected.methods.B} accent="var(--method-b)" isChosen={selected.chosenMethod === "B"} onChoose={() => chooseMethod("B")} />
-          <MethodColumn label="Method C" engine="linktransformer" data={selected.methods.C} accent="var(--method-c)" isChosen={selected.chosenMethod === "C"} onChoose={() => chooseMethod("C")} />
-        </div>
-        <div className="text-xs muted mt-2">Click a method card to select it as the final match for this row.</div>
-      </div>
-
-      <div className="surf border-l flex flex-col">
-        <div className="p-4 border-b b">
-          <div className="text-xs font-semibold muted uppercase tracking-wide mb-2">Spatial preview</div>
-          <div className="surf2 border b rounded-lg p-2">
-            <SpatialPreview sourceId={selected.sourceId} sourceName={selected.sourceName} realGeometry={realGeometry} />
-          </div>
-        </div>
-
-        <div className="p-4 border-b b">
-          <div className="text-xs font-semibold muted uppercase tracking-wide mb-2">Audit note</div>
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. verified manually against the source system" className="w-full surf2 border b rounded-md text-sm px-3 py-2 h-20 resize-none" style={{ color: "var(--text)" }} />
-          <button onClick={() => { if (note) { patchReviewRow(selected.sourceId, { note }); setToast(`Note saved for row ${selected.sourceId}.`); } }} className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-2">Save note</button>
-        </div>
-
-        <div className="p-4 border-b b flex flex-col gap-2">
-          <div className="text-xs font-semibold muted uppercase tracking-wide mb-1">Direct control</div>
-          <button onClick={() => chooseMethod("A")} className="btn btn-ghost text-sm font-medium px-3 py-2 text-left">Select Method A</button>
-          <button onClick={() => chooseMethod("B")} className="btn btn-ghost text-sm font-medium px-3 py-2 text-left">Select Method B</button>
-          <button onClick={() => setToast("Manual target ID search opened.")} className="btn btn-ghost text-sm font-medium px-3 py-2 text-left">Manual target ID search</button>
-          <button
-            onClick={() => { setToast(`Looking up "${selected.sourceName}" via Nominatim (OpenStreetMap)...`); geocodeLookup(selected.sourceName); }}
-            className="btn btn-ghost text-sm font-medium px-3 py-2 text-left"
-            title="One-off geocoding lookup for stubborn cases, calls the real relink-api /api/geocode endpoint. Not run in bulk, Nominatim is rate-limited to 1 request/second."
-          >
-            Look up name via Nominatim
-          </button>
-          <button onClick={rejectRow} className="btn btn-danger text-sm font-medium px-3 py-2 text-left">Reject row</button>
-        </div>
-
-        <div className="p-4 flex flex-col gap-2">
-          <div className="text-xs font-semibold muted uppercase tracking-wide mb-1">Bulk actions</div>
-          <button onClick={approveAllConsensus} className="btn btn-success text-sm font-medium px-3 py-2 text-left">Approve all rows in full consensus</button>
-          <button onClick={rejectBelowThreshold} className="btn btn-danger text-sm font-medium px-3 py-2 text-left">Reject below threshold score</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------------- */
-/* Tab 5: Approve & finalize                                             */
-/* ---------------------------------------------------------------------- */
-
-function TabApproveFinalize(props) {
-  const { reviewRows, pendingDecisions, setPendingDecisions, merged, setMerged, setToast, finalRows, bulkReview } = props;
-
-  const pending = reviewRows.filter((r) => !r.approved);
-
-  const approvedFromPending = pending.filter((r) => pendingDecisions[r.sourceId] === "approved");
-  const rejectedCount = Object.values(pendingDecisions).filter((d) => d === "rejected").length;
-  const undecidedCount = pending.length - Object.keys(pendingDecisions).length;
-
-  function decide(sourceId, decision) {
-    setPendingDecisions((prev) => ({ ...prev, [sourceId]: decision }));
-  }
-
-  function approveAllRemaining() {
-    const before = pendingDecisions;
-    const next = { ...pendingDecisions };
-    let n = 0;
-    pending.forEach((r) => { if (!next[r.sourceId]) { next[r.sourceId] = "approved"; n++; } });
-    setPendingDecisions(next);
-    setToast({
-      message: `Approved ${n} remaining row(s).`,
-      undo: n > 0 ? () => { setPendingDecisions(before); setToast("Undone."); } : undefined,
-    });
-  }
-
-  async function mergeAndFinalize() {
-    if (undecidedCount > 0) {
-      setToast(`${undecidedCount} row(s) still undecided. Decide or use "Approve all remaining" first.`);
-      return;
-    }
-    const approveIds = pending.filter((r) => pendingDecisions[r.sourceId] === "approved").map((r) => r.sourceId);
-    const rejectIds = pending.filter((r) => pendingDecisions[r.sourceId] === "rejected").map((r) => r.sourceId);
-    setToast("Saving decisions to the backend...");
-    if (approveIds.length) await bulkReview("approve", approveIds);
-    if (rejectIds.length) await bulkReview("reject", rejectIds);
-    setMerged(true);
-    setToast(`Merged. Final answer ready (saved to the backend).`);
-  }
-
-  function exportFinal() {
-    const csv = "source_id,source_name,target_id,target_name\n" +
-      finalRows.map((r) => `${r.sourceId},"${r.sourceName}",${r.targetId},"${r.target}"`).join("\n");
-    downloadFile("final_linked_answer.csv", csv, "text/csv");
-    setToast("Exported final_linked_answer.csv (client-side preview -- for the authoritative export use the Export & audit tab).");
-  }
-
-  if (merged) {
-    return (
-      <div className="p-5 max-w-4xl mx-auto">
-        <div className="card surf border p-5">
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-sm font-semibold">Final linked answer</div>
-            <button onClick={exportFinal} className="btn btn-primary text-xs font-medium px-3.5 py-1.5">Export CSV</button>
-          </div>
-          <div className="text-xs muted mb-4">{finalRows.length} rows. Clean and process-free: just the source and its final match.</div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b b">
-                <th className="pb-2 muted text-xs uppercase tracking-wide">Source ID</th>
-                <th className="pb-2 muted text-xs uppercase tracking-wide">Source name</th>
-                <th className="pb-2 muted text-xs uppercase tracking-wide">Linked target</th>
-                <th className="pb-2 muted text-xs uppercase tracking-wide">Target ID</th>
-              </tr>
-            </thead>
-            <tbody>
-              {finalRows.map((r) => (
-                <tr key={r.sourceId} className="border-b b">
-                  <td className="py-2.5 font-mono text-xs muted">{r.sourceId}</td>
-                  <td className="py-2.5 font-medium">{r.sourceName}</td>
-                  <td className="py-2.5">{r.target}</td>
-                  <td className="py-2.5 font-mono text-xs muted">{r.targetId}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <button onClick={() => setMerged(false)} className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-4">&larr; Unmerge and edit approvals</button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="rls-grid-approve">
-      <div className="p-5 overflow-y-auto">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <div className="text-sm font-semibold">Pending approvals</div>
-            <div className="text-xs muted mt-0.5">{undecidedCount} undecided, {approvedFromPending.length} approved, {rejectedCount} rejected</div>
-          </div>
-          <button onClick={approveAllRemaining} className="btn btn-ghost text-xs font-medium px-3 py-1.5">Approve all remaining</button>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          {pending.map((r) => {
-            const decision = pendingDecisions[r.sourceId];
-            const bestMethod = r.methods.A.name ? r.methods.A : r.methods.B;
-            return (
-              <div key={r.sourceId} className="card border p-3.5 flex items-center justify-between gap-4"
-                style={{
-                  background: decision === "approved" ? "var(--success-soft)" : decision === "rejected" ? "var(--danger-soft)" : "var(--surface)",
-                  borderColor: decision === "approved" ? "var(--success)" : decision === "rejected" ? "var(--danger)" : "var(--border)",
-                }}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs muted font-mono">#{r.sourceId}</span>
-                    <span className="text-sm font-medium">{r.sourceName}</span>
-                    <span className="muted text-xs">&rarr;</span>
-                    <span className="text-sm">{bestMethod.name}</span>
+          <div className="flex-1 overflow-y-auto">
+            {pagedRows.map((r) => (
+              <div key={r.sourceId} onClick={() => setSelectedId(r.sourceId)} className="cursor-pointer px-3.5 py-3 border-b b" style={r.sourceId === selectedId ? { background: "var(--primary-soft)" } : {}}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs muted font-mono">#{r.sourceId}</span>
+                  <div className="flex items-center gap-1.5">
+                    {isDecided(r) && <span className="text-xs" style={{ color: "var(--success)" }} title="Decided">&#10003;</span>}
+                    <KindBadge kind={r.kind} />
                   </div>
-                  <div className="text-xs muted mt-1">{r.kind.replace("_", " ")}, score {bestMethod.score ? (bestMethod.score * 100).toFixed(1) : "n/a"}%</div>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button onClick={() => decide(r.sourceId, "approved")} className="btn btn-success text-xs font-medium px-3 py-1.5">{decision === "approved" ? "Approved" : "Approve"}</button>
-                  <button onClick={() => decide(r.sourceId, "rejected")} className="btn btn-danger text-xs font-medium px-3 py-1.5">{decision === "rejected" ? "Rejected" : "Reject"}</button>
-                </div>
+                <div className="text-sm font-medium">{r.sourceName}</div>
+                <div className="text-xs muted mt-0.5">{r.hierarchy}</div>
               </div>
-            );
-          })}
-          {pending.length === 0 && <div className="text-sm muted">Nothing pending. Everything is already approved.</div>}
+            ))}
+            {filteredRows.length === 0 && <div className="p-4 text-sm muted">No rows match this filter.</div>}
+          </div>
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between px-3 py-2 border-t b text-xs">
+              <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={safePage === 0} className="btn btn-ghost px-2 py-1" style={safePage === 0 ? { opacity: 0.4, cursor: "not-allowed" } : {}}>&larr; Prev</button>
+              <span className="muted">
+                {safePage * PAGE_SIZE + 1}&ndash;{Math.min(filteredRows.length, (safePage + 1) * PAGE_SIZE)} of {filteredRows.length}
+              </span>
+              <button onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} disabled={safePage === pageCount - 1} className="btn btn-ghost px-2 py-1" style={safePage === pageCount - 1 ? { opacity: 0.4, cursor: "not-allowed" } : {}}>Next &rarr;</button>
+            </div>
+          )}
+        </div>
+
+        <div className="p-5 overflow-y-auto" style={{ background: "var(--bg)" }}>
+          <div className="flex items-center justify-between mb-3">
+            <AlertBanner row={selected} />
+          </div>
+          <div className="flex justify-end -mt-3 mb-3">
+            <button onClick={goToNextUnreviewed} className="btn btn-ghost text-xs font-medium px-3 py-1.5">
+              Next undecided row (N) &rarr;
+            </button>
+          </div>
+
+          <div className="card surf border p-4 mb-4">
+            <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Source row</div>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+              <div><span className="muted">source_id</span> &nbsp; <span className="font-mono">{selected.sourceId}</span></div>
+              <div><span className="muted">name</span> &nbsp; {selected.sourceName}</div>
+              <div><span className="muted">hierarchy</span> &nbsp; {selected.hierarchy}</div>
+              <div><span className="muted">approved</span> &nbsp; {selected.approved ? "yes" : "no"}</div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs font-semibold muted uppercase tracking-wide">
+              {candidateKeys.length}-method comparison
+            </div>
+            <ConsensusIndicator row={selected} />
+          </div>
+
+          {candidateKeys.length === 0 ? (
+            <div className="text-sm muted card surf2 border p-4">No candidate-producing method is enabled for this project (only geometry corroboration, if anything). Go back to "Hierarchy & methods" to turn one on.</div>
+          ) : (
+            <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${candidateKeys.length}, minmax(170px, 1fr))` }}>
+              {candidateKeys.map((k) => (
+                <MethodColumn
+                  key={k}
+                  label={METHOD_META[k].label}
+                  engine={METHOD_META[k].engine}
+                  data={selected.methods[k]}
+                  accent={METHOD_META[k].accent}
+                  isChosen={selected.chosenMethod === k}
+                  onChoose={() => chooseMethod(k)}
+                />
+              ))}
+            </div>
+          )}
+          <div className="text-xs muted mt-2">Click a method card to select it as the final match for this row.</div>
+        </div>
+
+        <div className="surf border-l flex flex-col overflow-y-auto">
+          <div className="p-4 border-b b">
+            <div className="text-xs font-semibold muted uppercase tracking-wide mb-2">Spatial preview</div>
+            <div className="surf2 border b rounded-lg p-2">
+              <SpatialPreview sourceId={selected.sourceId} sourceName={selected.sourceName} realGeometry={realGeometry} />
+            </div>
+          </div>
+
+          <div className="p-4 border-b b">
+            <div className="text-xs font-semibold muted uppercase tracking-wide mb-2">Audit note</div>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. verified manually against the source system" className="w-full surf2 border b rounded-md text-sm px-3 py-2 h-20 resize-none" style={{ color: "var(--text)" }} />
+            <button onClick={() => { if (note) { patchReviewRow(selected.sourceId, { note }); setToast(`Note saved for row ${selected.sourceId}.`); } }} className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-2">Save note</button>
+          </div>
+
+          <div className="p-4 flex flex-col gap-2">
+            <div className="text-xs font-semibold muted uppercase tracking-wide mb-1">Direct control</div>
+            {candidateKeys.map((k) => (
+              <button key={k} onClick={() => chooseMethod(k)} className="btn btn-ghost text-sm font-medium px-3 py-2 text-left">
+                Select {METHOD_META[k].shortLabel}
+              </button>
+            ))}
+            <button onClick={() => setToast("Manual target ID search opened.")} className="btn btn-ghost text-sm font-medium px-3 py-2 text-left">Manual target ID search</button>
+            <button
+              onClick={() => { setToast(`Looking up "${selected.sourceName}" via Nominatim (OpenStreetMap)...`); geocodeLookup(selected.sourceName); }}
+              className="btn btn-ghost text-sm font-medium px-3 py-2 text-left"
+              title="One-off geocoding lookup for stubborn cases, calls the real relink-api /api/geocode endpoint. Not run in bulk, Nominatim is rate-limited to 1 request/second."
+            >
+              Look up name via Nominatim
+            </button>
+            <button onClick={rejectRow} className="btn btn-danger text-sm font-medium px-3 py-2 text-left">Reject row</button>
+          </div>
         </div>
       </div>
 
-      <div className="surf border-l p-5 flex flex-col">
-        <div className="text-sm font-semibold mb-1">Final answer preview</div>
-        <div className="text-xs muted mb-4">Updates live as you decide. Nothing is written until you merge.</div>
-
-        <div className="card surf2 border p-3 mb-4">
-          <div className="text-xs muted mb-1">Rows that will be in the final answer</div>
-          <div className="text-2xl font-semibold">{finalRows.length}</div>
+      {/* Always-visible footer: summary, bulk actions, and merge. No more
+          scrolling the sidebar to find these. */}
+      <div className="surf border-t b flex items-center justify-between gap-4 px-5 py-3" style={{ flexShrink: 0 }}>
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="text-xs muted">
+            <span className="font-semibold" style={{ color: "var(--text)" }}>{decidedCount}</span> / {rows.length} decided
+            {undecidedCount > 0 && <span> &middot; {undecidedCount} left</span>}
+          </div>
+          <button onClick={approveAllConsensus} className="btn btn-success text-xs font-medium px-3 py-1.5">Approve all in full consensus</button>
+          <button onClick={rejectBelowThreshold} className="btn btn-danger text-xs font-medium px-3 py-1.5">Reject below threshold score</button>
+          {undecidedCount > 0 && (
+            <button onClick={approveAllRemaining} className="btn btn-ghost text-xs font-medium px-3 py-1.5">Approve all remaining (best candidate)</button>
+          )}
         </div>
-
-        <div className="flex-1 overflow-y-auto flex flex-col gap-1.5 mb-4">
-          {ALREADY_APPROVED.map((r) => (
-            <div key={r.sourceId} className="text-xs surf border b rounded-md px-2.5 py-1.5 flex items-center justify-between">
-              <span>{r.sourceName}</span>
-              <span className="muted">already approved</span>
-            </div>
-          ))}
-          {approvedFromPending.map((r) => (
-            <div key={r.sourceId} className="rowIn text-xs rounded-md px-2.5 py-1.5 flex items-center justify-between" style={{ background: "var(--success-soft)", color: "var(--success)" }}>
-              <span>{r.sourceName}</span>
-              <span>just approved</span>
-            </div>
-          ))}
-        </div>
-
-        <button onClick={mergeAndFinalize} className="btn btn-primary text-sm font-semibold px-4 py-3" disabled={undecidedCount > 0} style={undecidedCount > 0 ? { opacity: 0.5, cursor: "not-allowed" } : {}}>
+        <button
+          onClick={mergeAndFinalize}
+          className="btn btn-primary text-sm font-semibold px-4 py-2"
+          disabled={undecidedCount > 0}
+          style={undecidedCount > 0 ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+          title={undecidedCount > 0 ? `${undecidedCount} row(s) still undecided.` : undefined}
+        >
           Merge and finalize {undecidedCount > 0 ? `(${undecidedCount} left)` : ""}
         </button>
       </div>
@@ -1448,8 +1541,7 @@ function TabApproveFinalize(props) {
   );
 }
 
-/* ---------------------------------------------------------------------- */
-/* Tab 6: Export & audit                                                 */
+/* Tab 5: Export & audit                                                 */
 /* ---------------------------------------------------------------------- */
 
 function CoverageBar({ label, value, total, color }) {
@@ -1468,7 +1560,8 @@ function CoverageBar({ label, value, total, color }) {
 }
 
 function TabExportAudit(props) {
-  const { finalRows, totalSourceRows, setToast, reviewRows, sourceGeometry, exportViaBackend, projectId, auditLog, fetchAuditLog } = props;
+  const { finalRows, totalSourceRows, setToast, reviewRows, sourceGeometry, sourceGeometryRows, sourceIdCol, exportViaBackend, projectId, auditLog, fetchAuditLog, merged, setActiveTab } = props;
+  const candidateKeys = enabledMethodKeys(props, { candidatesOnly: true });
   const [mode, setMode] = useState("replace");
   const [format, setFormat] = useState(null);
   const [auditSearch, setAuditSearch] = useState("");
@@ -1527,14 +1620,49 @@ function TabExportAudit(props) {
       return;
     }
     if (fmt === "geojson") {
-      const features = finalRows.map((r) => ({
-        type: "Feature",
-        geometry: (sourceGeometry && sourceGeometry[Number(r.sourceId)]) || null,
-        properties: { source_id: r.sourceId, source_name: r.sourceName, target_id: r.targetId, target_name: r.target },
-      }));
+      // Look each row's geometry up by its actual ID column value, not by
+      // treating the ID as a raw array position -- those only coincide
+      // when the ID column happens to be sequential and 0-based.
+      const geomIndexBySourceId = {};
+      if (sourceGeometryRows && sourceIdCol) {
+        sourceGeometryRows.forEach((row, i) => {
+          const idVal = row[sourceIdCol];
+          if (idVal !== undefined && idVal !== null) geomIndexBySourceId[String(idVal)] = i;
+        });
+      }
+      const features = finalRows.map((r) => {
+        const idx = geomIndexBySourceId[String(r.sourceId)];
+        return {
+          type: "Feature",
+          geometry: (sourceGeometry && idx !== undefined && sourceGeometry[idx]) || null,
+          properties: { source_id: r.sourceId, source_name: r.sourceName, target_id: r.targetId, target_name: r.target },
+        };
+      });
       downloadFile("relink_export.geojson", JSON.stringify({ type: "FeatureCollection", features }, null, 2), "application/geo+json");
       setToast(`Exported relink_export.geojson (${linked} approved row(s), built in the browser${sourceGeometry ? "" : " -- no source geometry was uploaded, so geometry is null on every feature"}).`);
     }
+  }
+
+  // Defense in depth: the tab bar already locks this tab until you've
+  // merged and finalized, but guard the tab body too in case it's ever
+  // reached another way (direct state, a future deep link, etc.) -- this
+  // is the authoritative export, it should never be reachable with an
+  // undecided/partial review still open.
+  if (!merged) {
+    return (
+      <div className="p-5 max-w-2xl mx-auto">
+        <div className="card surf border p-6 text-center">
+          <div className="text-sm font-semibold mb-1.5">Not ready to export yet</div>
+          <div className="text-sm muted mb-4">
+            Export produces the authoritative, final answer set. It only makes sense once every review row has been
+            decided and you've merged and finalized -- otherwise you'd be downloading a partial or undecided result.
+          </div>
+          <button onClick={() => setActiveTab(3)} className="btn btn-primary text-sm font-medium px-4 py-2">
+            &larr; Go finish review &amp; finalize
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1543,7 +1671,10 @@ function TabExportAudit(props) {
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Run summary</div>
         <div className="flex flex-col gap-4">
           <CoverageBar label="Total coverage" value={linked} total={total} color="var(--primary)" />
-          <CoverageBar label="3-way consensus" value={consensus} total={total} color="var(--success)" />
+          <CoverageBar
+            label={candidateKeys.length > 1 ? `Full ${candidateKeys.length}-method consensus` : "Consensus"}
+            value={consensus} total={total} color="var(--success)"
+          />
         </div>
       </div>
 
@@ -1854,20 +1985,24 @@ export default function RelinkStudio() {
   }
 
   const finalRows = useMemo(() => {
+    const candidateKeys = enabledMethodKeys({ methodA, methodB, methodC, methodD, methodE }, { candidatesOnly: true });
     const fromReview = reviewRows
       .filter((r) => r.approved)
       .map((r) => {
-        const m = r.chosenMethod ? r.methods[r.chosenMethod] : (r.methods.A.name ? r.methods.A : r.methods.B);
+        const m = r.chosenMethod ? r.methods[r.chosenMethod] : bestCandidate(r, candidateKeys);
         return { sourceId: r.sourceId, sourceName: r.sourceName, target: m.name, targetId: m.targetId };
       });
+    // Safety net for the brief window between an optimistic local decision
+    // and the backend PATCH resolving (see patchReviewRow) -- once it
+    // resolves, the row shows up via r.approved above instead.
     const fromPending = reviewRows
       .filter((r) => !r.approved && pendingDecisions[r.sourceId] === "approved")
       .map((r) => {
-        const m = r.methods.A.name ? r.methods.A : r.methods.B;
+        const m = bestCandidate(r, candidateKeys);
         return { sourceId: r.sourceId, sourceName: r.sourceName, target: m.name, targetId: m.targetId };
       });
     return [...ALREADY_APPROVED, ...fromReview, ...fromPending].sort((a, b) => Number(a.sourceId) - Number(b.sourceId));
-  }, [reviewRows, pendingDecisions]);
+  }, [reviewRows, pendingDecisions, methodA, methodB, methodC, methodD, methodE]);
 
   function buildConfigObject() {
     return {
@@ -1964,7 +2099,7 @@ export default function RelinkStudio() {
     flagLowCoverageZones, setFlagLowCoverageZones, sortOutputBy, setSortOutputBy,
     rows: reviewRows, setRows: setReviewRows, selectedId: reviewSelectedId, setSelectedId: setReviewSelectedId, note: reviewNote, setNote: setReviewNote,
     reviewRows, pendingDecisions, setPendingDecisions, merged, setMerged, finalRows,
-    totalSourceRows: sourceFile.rowCount, sourceGeometry: sourceFile.geometry,
+    totalSourceRows: sourceFile.rowCount, sourceGeometry: sourceFile.geometry, sourceGeometryRows: sourceFile.geometryRows,
     setToast, setActiveTab,
     projectId, patchReviewRow, bulkReview, undoReview, geocodeLookup,
     exportViaBackend, auditLog, fetchAuditLog,
@@ -1982,11 +2117,11 @@ export default function RelinkStudio() {
     navProps = { ...navProps, canContinue: filesReady, blockedReason: (sourceFile.uploadError || targetFile.uploadError) ? "Backend upload failed for one of your files, check the warning above and re-upload." : "Upload both a source and target file to continue." };
   } else if (activeTab === 1) {
     navProps = { ...navProps, canContinue: methodChosen, blockedReason: "Enable at least one matching method to continue." };
-  } else if (activeTab === 4) {
+  } else if (activeTab === 3) {
     navProps = {
       ...navProps,
       canContinue: merged,
-      blockedReason: "Merge and finalize your decisions first.",
+      blockedReason: "Merge and finalize your review decisions first.",
       continueLabel: "Continue to export and audit \u2192",
     };
   }
@@ -1995,15 +2130,14 @@ export default function RelinkStudio() {
     <div data-theme={theme} className="rls" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{TOKENS_CSS}</style>
       {toast && <Toast toast={toast} onDone={() => setToast(null)} />}
-      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} />
+      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} />
 
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingBottom: "76px" }}>
         {activeTab === 0 && <TabSourcesShape {...tabProps} />}
         {activeTab === 1 && <TabHierarchyMethods {...tabProps} />}
         {activeTab === 2 && <TabSafetyRules {...tabProps} />}
-        {activeTab === 3 && <TabReviewQueue {...tabProps} />}
-        {activeTab === 4 && <TabApproveFinalize {...tabProps} />}
-        {activeTab === 5 && <TabExportAudit {...tabProps} />}
+        {activeTab === 3 && <TabReviewAndFinalize {...tabProps} />}
+        {activeTab === 4 && <TabExportAudit {...tabProps} />}
       </div>
 
       <NavFooter {...navProps} />
