@@ -31,13 +31,35 @@ def parse_file(path, original_filename):
 
 
 def _clean_rows(df):
-    # Drop fully-blank rows (the trailing-empty-row bug) and normalize NaN -> None.
     df = df.dropna(how="all")
     df = df.where(pd.notnull(df), None)
     return df
 
 
+def _raw_header_duplicates(path, read_header_fn):
+    """pandas silently renames a repeated header ("name" -> "name.1")
+    during the real read, so checking df.columns afterwards can never see
+    the collision that actually happened in the file. Read just the raw
+    header row first and check it before pandas gets a chance to paper
+    over it."""
+    try:
+        raw_columns = list(read_header_fn())
+    except Exception:
+        return []
+    seen = set()
+    dupes = set()
+    for c in raw_columns:
+        if c in seen:
+            dupes.add(c)
+        seen.add(c)
+    return sorted(dupes)
+
+
 def _parse_csv(path):
+    dupes = _raw_header_duplicates(path, lambda: pd.read_csv(path, header=None, nrows=1, dtype=str).iloc[0].tolist())
+    if dupes:
+        raise ParseError(f"Duplicate column header(s): {', '.join(dupes)}. Rename them before uploading.")
+
     try:
         df = pd.read_csv(path, dtype=str, keep_default_na=True)
     except pd.errors.EmptyDataError:
@@ -55,6 +77,10 @@ def _parse_csv(path):
 
 
 def _parse_excel(path):
+    dupes = _raw_header_duplicates(path, lambda: pd.read_excel(path, sheet_name=0, header=None, nrows=1, dtype=str).iloc[0].tolist())
+    if dupes:
+        raise ParseError(f"Duplicate column header(s): {', '.join(dupes)}. Rename them before uploading.")
+
     try:
         df = pd.read_excel(path, sheet_name=0, dtype=str)
     except Exception as e:
@@ -93,8 +119,6 @@ def _parse_geojson(path):
 
 
 def save_parsed_payload(upload_dir, file_id, payload):
-    """Cache full parsed rows + geometry to disk, keyed by file_id, so /run
-    doesn't need to re-parse or hold everything in memory between requests."""
     out_path = os.path.join(upload_dir, f"{file_id}.parsed.json")
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f)

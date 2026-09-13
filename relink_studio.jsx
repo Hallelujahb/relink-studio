@@ -97,6 +97,12 @@ const TOKENS_CSS = `
   .tab-pill:hover { background: var(--surface-hover); border-color: var(--border-strong); }
   .toast { animation: toastIn .18s ease-out; }
   .rowIn { animation: rowIn .25s ease-out; }
+  /* Distinct "this row is approved" affirmation, separate from whichever
+     method's own accent color was chosen -- always the same green glow
+     regardless of which method card it's applied to, so approval reads
+     as approval at a glance rather than blending into method branding. */
+  .approvedGlow { animation: approvedPulse .4s ease-out; box-shadow: 0 0 0 2px var(--success), 0 0 14px 1px color-mix(in srgb, var(--success) 45%, transparent); }
+  @keyframes approvedPulse { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 60%, transparent); } to { box-shadow: 0 0 0 2px var(--success), 0 0 14px 1px color-mix(in srgb, var(--success) 45%, transparent); } }
   @keyframes toastIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes rowIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -245,7 +251,7 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
       <div className="surf border-b flex items-center justify-between px-5 py-3">
         <div className="flex items-center gap-3">
           <Logo />
-          <span className="font-semibold text-sm tracking-tight">Relink Studio</span>
+          <span className="font-semibold text-sm tracking-tight">ReLink Studio</span>
           <span className="text-xs muted surf2 border b px-2 py-1 rounded-md">{sourceFile.name} &harr; {targetFile.name}</span>
         </div>
         <div className="flex items-center gap-3">
@@ -1062,7 +1068,7 @@ function MethodColumn({ label, engine, data, accent, isChosen, onChoose }) {
   return (
     <button
       onClick={data.name ? onChoose : undefined}
-      className={`card border p-3.5 flex flex-col gap-2.5 text-left transition-all ${data.name ? "cursor-pointer" : "cursor-default opacity-60"}`}
+      className={`card border p-3.5 flex flex-col gap-2.5 text-left transition-all ${data.name ? "cursor-pointer" : "cursor-default opacity-60"} ${isChosen ? "approvedGlow" : ""}`}
       style={{
         borderColor: isChosen ? accent : "var(--border)",
         borderWidth: isChosen ? "2px" : "1px",
@@ -1407,7 +1413,7 @@ function TabReviewAndFinalize(props) {
           </div>
           <div className="flex-1 overflow-y-auto">
             {pagedRows.map((r) => (
-              <div key={r.sourceId} onClick={() => setSelectedId(r.sourceId)} className="cursor-pointer px-3.5 py-3 border-b b" style={r.sourceId === selectedId ? { background: "var(--primary-soft)" } : {}}>
+              <div key={r.sourceId} onClick={() => setSelectedId(r.sourceId)} className={`cursor-pointer px-3.5 py-3 border-b b ${r.approved ? "approvedGlow" : ""}`} style={r.sourceId === selectedId ? { background: "var(--primary-soft)" } : {}}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs muted font-mono">#{r.sourceId}</span>
                   <div className="flex items-center gap-1.5">
@@ -2080,7 +2086,7 @@ export default function RelinkStudio() {
         if (c.output) setSortOutputBy(c.output.sort_by ?? sortOutputBy);
         setToast(`Loaded configuration from ${file.name}. Setup now matches the file you uploaded.`);
       } catch (err) {
-        setToast(`Could not read ${file.name}: not a valid Relink Studio config file.`);
+        setToast(`Could not read ${file.name}: not a valid ReLink Studio config file.`);
       }
     };
     reader.readAsText(file);
