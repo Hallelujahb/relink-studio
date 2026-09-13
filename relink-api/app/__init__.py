@@ -3,9 +3,12 @@ from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 
 from .db import init_db
+from .config import load_config
 
 
 def create_app():
+    cfg = load_config()
+
     frontend_dist = os.environ.get("RELINK_FRONTEND_DIST")
     app = Flask(
         __name__,
@@ -13,27 +16,26 @@ def create_app():
         static_url_path="",
     )
 
-    app.config["DATA_DIR"] = os.environ.get(
-        "RELINK_DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "data")
-    )
-    app.config["UPLOAD_DIR"] = os.environ.get(
-        "RELINK_UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads")
-    )
+    app.config["RELINK_CONFIG"] = cfg
+    app.config["RELINK_REQUIRE_AUTH"] = cfg.require_auth
+    app.config["DATA_DIR"] = cfg.data_dir
+    app.config["UPLOAD_DIR"] = cfg.upload_dir
     app.config["MAX_CONTENT_LENGTH"] = int(
         os.environ.get("RELINK_MAX_UPLOAD_BYTES", 50 * 1024 * 1024)  # 50 MB default
     )
     os.makedirs(app.config["DATA_DIR"], exist_ok=True)
     os.makedirs(app.config["UPLOAD_DIR"], exist_ok=True)
 
-    # Vite's default dev server port. Override with RELINK_CORS_ORIGINS
-    # (comma-separated) for other setups.
-    origins = os.environ.get("RELINK_CORS_ORIGINS", "http://localhost:5173").split(",")
-    CORS(app, resources={r"/api/*": {"origins": origins}})
+    CORS(app, resources={r"/api/*": {"origins": cfg.cors_origins}})
 
     init_db(app.config["DATA_DIR"])
 
     from .routes import bp as api_bp
     app.register_blueprint(api_bp, url_prefix="/api")
+
+    @app.route("/health")
+    def health():
+        return jsonify({"status": "ok", "mode": cfg.mode, "auth_required": cfg.require_auth})
 
     @app.errorhandler(413)
     def too_large(e):

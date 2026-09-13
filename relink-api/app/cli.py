@@ -1,14 +1,21 @@
-"""Entry point for the `relink-studio-api` console script (see pyproject.toml)."""
-import os
+import sys
+
+from .config import ConfigError
 
 
 def main():
-    from . import create_app
-    app = create_app()
-    port = int(os.environ.get("PORT", 5000))
-    debug = os.environ.get("RELINK_DEBUG", "0") == "1"
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    try:
+        from . import create_app
+        app = create_app()
+    except ConfigError as e:
+        print(f"Relink configuration error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    cfg = app.config["RELINK_CONFIG"]
+    cfg.print_banner()
+    app.run(host=cfg.host, port=cfg.port, debug=cfg.debug)
 
 
 if __name__ == "__main__":
     main()
+

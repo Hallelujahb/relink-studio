@@ -26,13 +26,30 @@ docker build -t relink-api .
 docker run -p 5000:5000 -v $(pwd)/data:/srv/data -v $(pwd)/uploads:/srv/uploads relink-api
 ```
 
-Env vars: `RELINK_CORS_ORIGINS` (comma-separated, default
-`http://localhost:5173`), `RELINK_MAX_UPLOAD_BYTES` (default 50MB),
-`RELINK_REQUIRE_AUTH=1` (enforce a bearer token on every route),
+Env vars: `RELINK_MODE` (`local` default, or `lan`), `RELINK_HOST`
+(default `127.0.0.1` in local mode, `0.0.0.0` in LAN mode),
+`RELINK_PORT` (default `5000`), `RELINK_CORS_ORIGINS` (comma-separated,
+default `http://localhost:5173`), `RELINK_MAX_UPLOAD_BYTES` (default
+50MB), `RELINK_REQUIRE_AUTH` (default off in local mode, on in LAN mode
+-- enforces a bearer token on every route when true), `RELINK_DEBUG`
+(Flask debug mode; ignored in LAN mode, which never runs with debug on),
+`RELINK_DATA_DIR` / `RELINK_UPLOAD_DIR` (existing storage paths),
 `RELINK_UPLOAD_EXPIRY_DAYS` (enable background cleanup of old
 unreferenced uploads), `RELINK_FRONTEND_DIST=/path/to/dist` (serve a
 built frontend from the same process), `RELINK_NOMINATIM_USER_AGENT`
-(set this to real contact info before relying on `/api/geocode`).
+(set this to real contact info before relying on `/api/geocode`). All of
+this is resolved in `app/config.py`; an explicit env var always
+overrides its mode's default. Invalid values (a bad `RELINK_MODE`, a
+non-numeric `RELINK_PORT`, etc.) raise a clear error at startup instead
+of falling back to a guess.
+
+`GET /health` (outside `/api`, always unauthenticated) returns
+`{"status": "ok", "mode": "local"|"lan", "auth_required": true|false}`
+so you can check a running instance's configuration at a glance.
+
+See the root `README.md` for the local-vs-LAN startup flow
+(`./run_relink.sh --local` / `--lan`) and the firewall / public-internet
+warnings that come with LAN mode.
 
 ## Tests
 
@@ -41,12 +58,15 @@ pip install pytest
 python -m pytest tests/ -v
 ```
 
-29 tests: matching-engine unit tests (normalization, methods A/B/D,
+53 tests: matching-engine unit tests (normalization, methods A/B/D,
 threshold/type-leak/collision-guard/tie-downgrade logic in the agreement
 combiner), parser unit tests (including a regression test for the xlsx
-trailing-empty-rows bug), and API-level integration tests covering the
-full upload -> project -> run -> review -> bulk -> undo -> export -> audit
-flow, plus auth and the approval hierarchy. All 29 pass as of this
+trailing-empty-rows bug), config/LAN-mode unit tests (`test_config.py`:
+RELINK_MODE/HOST/PORT/REQUIRE_AUTH/CORS_ORIGINS resolution, invalid-value
+errors, the `/health` endpoint, and that LAN mode's auth-required default
+actually gates a real route), and API-level integration tests covering
+the full upload -> project -> run -> review -> bulk -> undo -> export ->
+audit flow, plus auth and the approval hierarchy. All 53 pass as of this
 writing -- rerun them yourself, don't take that on faith.
 
 ## Section-by-section status
@@ -88,12 +108,13 @@ for horizontal scaling.
 
 **5. Multi-user / auth** -- `app/auth.py`: username/password
 (werkzeug-hashed), bearer tokens with expiry, two roles (`reviewer`,
-`lead`). Off by default (`RELINK_REQUIRE_AUTH=0`) so the API still works
-unauthenticated, matching the original test flow -- verified both paths
-still pass. Real per-user audit attribution (not "anonymous" once
-logged in). Approval hierarchy: `POST .../review/{id}/submit` (any
-authenticated user) then `POST .../review/{id}/approve` (lead role
-only), gated by `config.safety.require_approval_hierarchy`.
+`lead`). Off by default in local mode, on by default in LAN mode (see
+`RELINK_MODE` / `RELINK_REQUIRE_AUTH` above) -- matching the original
+test flow when unauthenticated, verified both paths still pass. Real
+per-user audit attribution (not "anonymous" once logged in). Approval
+hierarchy: `POST .../review/{id}/submit` (any authenticated user) then
+`POST .../review/{id}/approve` (lead role only), gated by
+`config.safety.require_approval_hierarchy`.
 
 **6. File-handling hardening** -- extension whitelist before disk write,
 empty-file rejection, `MAX_CONTENT_LENGTH` for oversized uploads,

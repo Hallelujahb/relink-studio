@@ -16,7 +16,6 @@ only *submit* a review row (POST .../submit); only a "lead" user can
 *approve* a submitted row (POST .../approve). Without that config flag,
 the original single-step PATCH .../review/{id} still works for anyone.
 """
-import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -27,7 +26,6 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from .db import get_conn
 
 SESSION_LIFETIME_HOURS = 12
-REQUIRE_AUTH = os.environ.get("RELINK_REQUIRE_AUTH", "0") == "1"
 
 
 def _uid():

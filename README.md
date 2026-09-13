@@ -5,7 +5,7 @@
 
 Relink Studio is a small tool built for linking two lists of records that should refer to the same real-world things, even when the names don't match exactly. It was built out of a need for reconciling a facility list against a partner system's list of the same locations, where every side used a different naming convention and doing that reconciliation by hand got old fast. It doesn't know anything about any particular domain though. It works on any two files where one column in each file names the thing being linked (a store, a company, a person, a place, whatever), and it will happily run on data that has nothing to do with facilities at all.
 
-Everything runs locally. There's a small Flask backend and a React frontend, and the two only talk to each other over `localhost`. Nothing gets uploaded anywhere outside your own machine.
+Everything runs locally and self-hosted, with no cloud or third-party AI service involved. There's a small Flask backend and a React frontend; by default the two only talk to each other over `localhost`, and an explicit opt-in LAN mode (see below) lets them talk over your own private network instead. Nothing gets uploaded anywhere outside machines you control.
 
 ## Why this exists
 
@@ -39,8 +39,38 @@ If you want the embeddings-based matching method (Method C, more on that below) 
 
 Fair warning, that pulls in torch, faiss, and sentence-transformers, which together are several gigabytes. It's entirely optional and the tool works fine without it for most use cases.
 
-## The five tabs, and what each setting actually does
+## Running locally vs. on your LAN
 
+Relink is local-first: everything runs on your own machine, and it stays that way whether you use it alone or share it with a couple of coworkers on the same office network. There's no cloud component and no external AI service involved anywhere in the pipeline -- matching runs entirely with the local methods described below, and nothing about a project (your files, matches, or review decisions) ever leaves the machine Relink is running on unless you export a file yourself.
+
+The backend has two modes, set with `RELINK_MODE` (or the flags on `run_relink.sh` below):
+
+- **`local`** (default): binds to `127.0.0.1` only. Nothing else on your network can reach it. This is the original, unchanged behavior.
+- **`lan`**: binds to `0.0.0.0` so other devices on the *same private network* can reach it (e.g. a teammate reviewing matches from their own laptop), requires authentication by default, and never runs with Flask's debug mode on.
+
+### Local startup (single machine)
+
+```bash
+./run_relink.sh --local
+```
+
+Equivalent to the existing `./setup_relink_studio.sh` flow -- use whichever you already have set up. The backend prints its URL, port, mode, whether auth is required, and its data/upload directories on startup.
+
+### Private-LAN startup (shared on your own network)
+
+```bash
+./run_relink.sh --lan
+```
+
+This binds the backend to `0.0.0.0` and turns on authentication by default (register a user with `POST /api/auth/register` and log in via `POST /api/auth/login` -- see `relink-api/README.md`). The startup banner prints both the local URL and the LAN URL your teammates should use.
+
+**Firewall warning:** binding to `0.0.0.0` makes Relink reachable by *every* device on whatever network you're connected to, not just the teammates you intend to share it with -- coffee-shop wifi, a hotel network, or an untrusted office guest network all count. Only use `--lan` on a network you trust (home, a locked-down office LAN, or over a VPN), and check that your machine's firewall isn't more permissive than you expect.
+
+**Do not expose Relink directly to the public internet.** Don't forward its port through your router, don't put it on a public IP, and don't tunnel it through a service that makes it internet-reachable. There's no built-in TLS, rate limiting, or hardening against internet-scale abuse -- LAN mode is for a trusted private network only, not for remote/public access. If you need that, put a real reverse proxy with TLS and its own access control in front of it yourself.
+
+Every setting (`RELINK_MODE`, `RELINK_HOST`, `RELINK_PORT`, `RELINK_REQUIRE_AUTH`, `RELINK_CORS_ORIGINS`, data/upload paths, and more) can still be set individually via environment variable, and an explicit value always overrides the mode's default -- see `relink-api/app/config.py` for the full list. `GET /health` returns `{"status": "ok", "mode": "...", "auth_required": true|false}` if you want to check a running instance's configuration.
+
+## The five tabs, and what each setting actually does
 ### 1. Sources & shape
 
 Upload your source file and your target file here. CSV, Excel, and GeoJSON all work.
@@ -123,12 +153,14 @@ Both Method A and Method B use a blocking key to avoid comparing every source ro
 relink-studio/
   relink-api/          Flask backend
     app/
+      config.py         RELINK_MODE/HOST/PORT/REQUIRE_AUTH/CORS resolution
       matching.py       The actual matching algorithms
       routes.py         API endpoints, job orchestration, export
       ...
     requirements.txt
   relink_studio.jsx     Standalone frontend, drop into your own Vite project if you'd rather not use the setup script
   setup_relink_studio.sh
+  run_relink.sh         Start the backend in --local or --lan mode
   test-dataset/         Small datasets for trying the pipeline before using real data
 ```
 
