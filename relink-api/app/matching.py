@@ -15,15 +15,9 @@ Implements:
 
 Method E (splink) is implemented as an optional dependency in
 `matching_splink.py` -- installed and checked against the same test
-fixtures used elsewhere in this project (see README).
-
-Method C (linktransformer) is implemented as an optional dependency in
-`matching_linktransformer.py`, but has not been run end to end: it needs
-to download a pretrained sentence-transformer model from Hugging Face Hub
-on first use, so the actual download/inference path has not been
-exercised in every environment. Enabling either method in a project
-config that doesn't have the corresponding package installed raises a
-real, labeled API error rather than returning a fabricated score.
+fixtures used elsewhere in this project (see README). Enabling it in a
+project config that doesn't have the package installed raises a real,
+labeled API error rather than returning a fabricated score.
 """
 import math
 import re
@@ -241,10 +235,12 @@ def combine_methods(source_rows, source_id_col, source_name_col, method_results,
 
         kind = "consensus"
         approved = False
+        chosen_method = None
 
         if best is None:
             kind = "unmatched"
         else:
+            chosen_method = next((k for k, m in methods.items() if m is best), None)
             if best["score"] >= auto_approve:
                 approved = True
             elif best["score"] < needs_review:
@@ -269,7 +265,7 @@ def combine_methods(source_rows, source_id_col, source_name_col, method_results,
             "sourceName": src_name,
             "kind": kind,
             "approved": approved,
-            "chosenMethod": None,
+            "chosenMethod": chosen_method,
             "collisionPartner": None,
             "methods": methods,
         })

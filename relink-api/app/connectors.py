@@ -18,9 +18,60 @@ Flask<->frontend setup.
 """
 from dataclasses import dataclass, field
 from typing import Optional
+import re
 
 _REDACTED = "***redacted***"
 _SECRET_FIELDS = ("password", "passwd", "pwd", "token", "secret")
+
+# Identifiers (table/column/schema names) are validated against this
+# before ever being interpolated into SQL text -- parameterized queries
+# can't parameterize identifiers, so this whitelist is the safety net
+# instead of string-escaping.
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def is_safe_identifier(name: str) -> bool:
+    return bool(name) and bool(_SAFE_IDENTIFIER_RE.match(name))
+
+
+def quote_identifier(name: str, quote_char: str = '"') -> str:
+    """Quotes a validated identifier for safe interpolation into SQL.
+    Raises rather than silently sanitizing -- a rejected identifier means
+    the caller passed something that was never a real column/table name."""
+    if not is_safe_identifier(name):
+        raise ValueError(f"Unsafe identifier rejected: {name!r} (only letters, digits, underscore; must not start with a digit)")
+    return f"{quote_char}{name}{quote_char}"
+
+
+def build_select_query(table: str, columns: Optional[list] = None, schema: Optional[str] = None,
+                        quote_char: str = '"', limit: Optional[int] = None, offset: Optional[int] = None) -> str:
+    """Builds a read-only SELECT with every identifier validated and
+    quoted -- never string-formats raw user input into the query."""
+    table_ref = quote_identifier(table, quote_char)
+    if schema:
+        table_ref = f"{quote_identifier(schema, quote_char)}.{table_ref}"
+    col_ref = "*" if not columns else ", ".join(quote_identifier(c, quote_char) for c in columns)
+    query = f"SELECT {col_ref} FROM {table_ref}"
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    if offset is not None:
+        query += f" OFFSET {int(offset)}"
+    return query
+
+
+def chunk_offsets(total_rows: int, chunk_size: int) -> list:
+    """Pure helper: the (offset, size) pairs a chunked extraction will
+    read, without touching any database. size < chunk_size on the last
+    chunk when total_rows doesn't divide evenly."""
+    if total_rows <= 0 or chunk_size <= 0:
+        return []
+    offsets = []
+    offset = 0
+    while offset < total_rows:
+        size = min(chunk_size, total_rows - offset)
+        offsets.append((offset, size))
+        offset += size
+    return offsets
 
 
 def redact_connection_config(config: dict) -> dict:
@@ -141,8 +192,94 @@ class PostgresProvider(BaseProvider):
         finally:
             conn.close()
 
+    def discover_schema(self) -> dict:
+        import psycopg2
+        if not self.config.table:
+            raise ValueError("config.table is required to discover a schema")
+        conn = self._connect(psycopg2)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+                    "WHERE table_name = %s AND table_schema = %s ORDER BY ordinal_position",
+                    (self.config.table, self.config.schema or "public"),
+                )
+                rows = cur.fetchall()
+            return {
+                "fields": [{"name": r[0], "dtype": r[1], "nullable": r[2] == "YES"} for r in rows],
+                "field_count": len(rows),
+            }
+        finally:
+            conn.close()
+
+    def estimate_row_count(self) -> Optional[int]:
+        import psycopg2
+        if not self.config.table:
+            raise ValueError("config.table is required to estimate a row count")
+        conn = self._connect(psycopg2)
+        try:
+            with conn.cursor() as cur:
+                # reltuples is a fast planner estimate, not an exact COUNT(*) --
+                # deliberately avoids a full table scan on large tables.
+                cur.execute(
+                    "SELECT reltuples::bigint FROM pg_class WHERE relname = %s",
+                    (self.config.table,),
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row and row[0] is not None else None
+        finally:
+            conn.close()
+
+    def extract_chunks(self, chunk_size: int = 5000, cancel_token=None):
+        """Yields lists of row dicts, one chunk at a time. cancel_token, if
+        given, is anything with a truthy .is_set() (e.g. threading.Event) --
+        checked between chunks so a long extraction can be stopped without
+        killing the process."""
+        import psycopg2
+        import psycopg2.extras
+        if not self.config.table:
+            raise ValueError("config.table is required to extract data")
+        conn = self._connect(psycopg2, cursor_factory=psycopg2.extras.RealDictCursor)
+        try:
+            offset = 0
+            while True:
+                if cancel_token is not None and cancel_token.is_set():
+                    return
+                query = build_select_query(self.config.table, schema=self.config.schema,
+                                            limit=chunk_size, offset=offset)
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(query)
+                    rows = [dict(r) for r in cur.fetchall()]
+                if not rows:
+                    return
+                yield rows
+                offset += len(rows)
+                if len(rows) < chunk_size:
+                    return
+        finally:
+            conn.close()
+
+    def _connect(self, psycopg2_module, **kwargs):
+        return psycopg2_module.connect(
+            host=self.config.host, port=self.config.port, dbname=self.config.database,
+            user=self.config.username, password=self.config.password,
+            sslmode="require" if self.config.ssl else "prefer", connect_timeout=5, **kwargs,
+        )
+
 
 class ClickHouseProvider(BaseProvider):
+    """NOT verified against a live ClickHouse instance or a real
+    clickhouse-connect installation in this environment (no ClickHouse
+    server and no network access to install/test the driver here). The
+    method signatures and query shapes below (client.query(), .command(),
+    parameterized queries, system.columns/system.tables) are based on
+    clickhouse-connect's documented API, but --unlike Postgres, where
+    psycopg2's API is stable and well-known-- this has not been exercised
+    end to end. In particular, query_row_block_stream() in extract_chunks()
+    is the least certain part; test it against your actual ClickHouse
+    instance before relying on it, and expect to adjust it if the
+    installed clickhouse-connect version's streaming API differs."""
+
     name = "clickhouse"
 
     def __init__(self, config: ConnectionConfig):
@@ -167,6 +304,59 @@ class ClickHouseProvider(BaseProvider):
         )
         client.command("SELECT 1")
         return {"ok": True, "config": redact_connection_config(self.config.__dict__)}
+
+    def _client(self):
+        import clickhouse_connect
+        return clickhouse_connect.get_client(
+            host=self.config.host, port=self.config.port, database=self.config.database,
+            username=self.config.username, password=self.config.password,
+            secure=self.config.ssl,
+        )
+
+    def discover_schema(self) -> dict:
+        if not self.config.table:
+            raise ValueError("config.table is required to discover a schema")
+        client = self._client()
+        result = client.query(
+            "SELECT name, type FROM system.columns WHERE table = {table:String} AND database = {db:String}",
+            parameters={"table": self.config.table, "db": self.config.database},
+        )
+        fields = [{"name": r[0], "dtype": r[1], "nullable": r[1].startswith("Nullable(")} for r in result.result_rows]
+        return {"fields": fields, "field_count": len(fields)}
+
+    def estimate_row_count(self) -> Optional[int]:
+        if not self.config.table:
+            raise ValueError("config.table is required to estimate a row count")
+        client = self._client()
+        # system.tables' `total_rows` is metadata ClickHouse already tracks
+        # for MergeTree-family engines -- avoids a full COUNT(*) scan.
+        result = client.query(
+            "SELECT total_rows FROM system.tables WHERE name = {table:String} AND database = {db:String}",
+            parameters={"table": self.config.table, "db": self.config.database},
+        )
+        rows = result.result_rows
+        return int(rows[0][0]) if rows and rows[0][0] is not None else None
+
+    def extract_chunks(self, chunk_size: int = 5000, cancel_token=None):
+        """Streams results in chunk_size batches using ClickHouse's native
+        streaming query cursor rather than loading the whole table into
+        memory at once."""
+        if not self.config.table:
+            raise ValueError("config.table is required to extract data")
+        client = self._client()
+        query = build_select_query(self.config.table)
+        with client.query_row_block_stream(query) as stream:
+            buffer = []
+            for block in stream:
+                if cancel_token is not None and cancel_token.is_set():
+                    return
+                for row in block:
+                    buffer.append(dict(zip(block.column_names, row)) if hasattr(block, "column_names") else row)
+                    if len(buffer) >= chunk_size:
+                        yield buffer
+                        buffer = []
+            if buffer:
+                yield buffer
 
 
 def get_provider(name: str, config: Optional[ConnectionConfig] = None) -> BaseProvider:

@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
+CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_project_status ON jobs(project_id, status);
 
 CREATE TABLE IF NOT EXISTS review_rows (
     id TEXT PRIMARY KEY,
@@ -54,12 +56,15 @@ CREATE TABLE IF NOT EXISTS review_rows (
     submitted_by TEXT,
     submitted_at TEXT,
     approved_by TEXT,
+    sort_key INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 CREATE INDEX IF NOT EXISTS idx_review_rows_project ON review_rows(project_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_review_rows_project_source ON review_rows(project_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_review_rows_project_kind ON review_rows(project_id, kind);
+CREATE INDEX IF NOT EXISTS idx_review_rows_project_approved ON review_rows(project_id, approved);
 
 CREATE TABLE IF NOT EXISTS decisions (
     id TEXT PRIMARY KEY,
@@ -71,6 +76,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_undo_token ON decisions(undo_token);
+CREATE INDEX IF NOT EXISTS idx_decisions_project ON decisions(project_id);
 
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -99,6 +105,57 @@ CREATE TABLE IF NOT EXISTS audit_log (
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_project ON audit_log(project_id);
+
+-- Added for batch 8: schema snapshots (per uploaded filename, so a
+-- re-upload of "the same" source can be diffed for drift), project
+-- exceptions (explicit, audited safety-rule overrides), and a structured
+-- append-only decision log (richer than the lightweight `decisions` undo
+-- table above, which only exists to power undo).
+CREATE TABLE IF NOT EXISTS schema_snapshots (
+    id TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    file_id TEXT,
+    schema_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_schema_snapshots_filename ON schema_snapshots(filename, created_at);
+
+CREATE TABLE IF NOT EXISTS project_exceptions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    creator TEXT NOT NULL,
+    affected_source_id TEXT,
+    affected_target_id TEXT,
+    affected_fields_json TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    review_date TEXT,
+    expires_at TEXT,
+    history_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_exceptions_project ON project_exceptions(project_id);
+
+CREATE TABLE IF NOT EXISTS review_decision_log (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    decision_type TEXT NOT NULL,
+    reviewer TEXT NOT NULL,
+    target_id TEXT,
+    confidence_at_decision REAL,
+    config_version INTEGER,
+    reason TEXT,
+    note TEXT,
+    is_bulk INTEGER NOT NULL DEFAULT 0,
+    batch_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+CREATE INDEX IF NOT EXISTS idx_review_decision_log_project_source ON review_decision_log(project_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_project_created ON audit_log(project_id, created_at);
 """
 
 
@@ -106,6 +163,7 @@ def init_db(data_dir):
     global _DB_PATH
     _DB_PATH = os.path.join(data_dir, "relink_studio.sqlite3")
     conn = sqlite3.connect(_DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
     conn.commit()
     conn.close()
@@ -118,4 +176,7 @@ def get_conn():
         _local.conn = sqlite3.connect(_DB_PATH, timeout=30)
         _local.conn.row_factory = sqlite3.Row
         _local.conn.execute("PRAGMA foreign_keys = ON")
+        # WAL lets the background matching thread write while an HTTP
+        # request thread reads (e.g. job polling) without lock timeouts.
+        _local.conn.execute("PRAGMA journal_mode = WAL")
     return _local.conn

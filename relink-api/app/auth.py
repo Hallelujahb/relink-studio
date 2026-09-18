@@ -4,17 +4,18 @@ werkzeug's hashing (already a Flask dependency, no new heavy dep), opaque
 bearer tokens stored in a `sessions` table with an expiry, and two roles:
 "reviewer" (default) and "lead".
 
-This is NOT enforced globally by default -- set RELINK_REQUIRE_AUTH=1 to
-require a valid token on every /api/projects/* route. Left optional
-because turning it on breaks the existing curl/test flow used elsewhere in
-this project unless every call is updated to send a token; see README for
-how to turn it on for a real deployment.
+Whether auth is globally required is NOT a module-level constant -- it's
+resolved by app/config.py (RELINK_MODE, defaulting auth on in "lan" mode
+and off in "local" mode) and stored on the Flask app as
+app.config["RELINK_REQUIRE_AUTH"]. require_auth() below reads it from
+current_app at request time so it responds to the actual app config
+instead of a value frozen at import time.
 
-Approval hierarchy (also section 5): when a project's
-config.safety.require_approval_hierarchy is true, a non-"lead" user can
-only *submit* a review row (POST .../submit); only a "lead" user can
-*approve* a submitted row (POST .../approve). Without that config flag,
-the original single-step PATCH .../review/{id} still works for anyone.
+Approval hierarchy: when a project's config.safety.require_approval_hierarchy
+is true, a non-"lead" user can only *submit* a review row (POST .../submit);
+only a "lead" user can *approve* a submitted row (POST .../approve). Without
+that config flag, the original single-step PATCH .../review/{id} still
+works for anyone.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -94,15 +95,17 @@ def get_current_user():
 
 def require_auth(role=None):
     """Decorator. Always resolves g.user from the token if present. Only
-    *rejects* the request if RELINK_REQUIRE_AUTH=1, or if `role` is given
-    and the resolved user doesn't have it (role check implies auth
-    required for that route regardless of the global flag, since a role
-    check without a real user makes no sense)."""
+    *rejects* the request if this app's config.RELINK_REQUIRE_AUTH is
+    True (set by app/config.py from RELINK_MODE / RELINK_REQUIRE_AUTH),
+    or if `role` is given and the resolved user doesn't have it (role
+    check implies auth required for that route regardless of the global
+    flag, since a role check without a real user makes no sense)."""
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             user = get_current_user()
-            if (REQUIRE_AUTH or role) and not user:
+            require_auth_globally = current_app.config.get("RELINK_REQUIRE_AUTH", False)
+            if (require_auth_globally or role) and not user:
                 return jsonify({"error": "Authentication required. Send 'Authorization: Bearer <token>' from POST /api/auth/login."}), 401
             if role and user and user["role"] != role:
                 return jsonify({"error": f"This action requires the '{role}' role; you are '{user['role']}'."}), 403

@@ -16,7 +16,6 @@ from .auth import require_auth, actor_name
 from .db import get_conn
 from .parsers import ParseError, parse_file, save_parsed_payload, load_parsed_payload
 from .matching_splink import method_e_splink, SplinkUnavailable
-from .matching_linktransformer import method_c_linktransformer, LinkTransformerUnavailable
 
 bp = Blueprint("api", __name__)
 
@@ -311,14 +310,6 @@ def _run_matching_job(app, project_id, job_id, triggered_by):
                     source_rows, target_rows, src_id_col, src_match_col, tgt_id_col, tgt_match_col,
                     matching_cfg, blocking_floor)
             method_meta = {}
-            if "linktransformer" in methods_enabled:
-                try:
-                    method_results["C"] = method_c_linktransformer(
-                        source_rows, target_rows, src_id_col, src_match_col, tgt_id_col, tgt_match_col,
-                        matching_cfg, blocking_floor)
-                except LinkTransformerUnavailable as e:
-                    method_results["C"] = {}
-                    method_meta["C"] = {"error": str(e)}
             if "splink" in methods_enabled:
                 try:
                     method_results["E"], splink_meta = method_e_splink(

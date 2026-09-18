@@ -55,3 +55,56 @@ def test_clickhouse_provider_raises_clear_error_when_driver_missing():
 def test_get_provider_unknown_name_raises_value_error():
     with pytest.raises(ValueError):
         connectors.get_provider("mongodb", None)
+
+
+def test_is_safe_identifier_accepts_normal_names():
+    assert connectors.is_safe_identifier("customer_id")
+    assert connectors.is_safe_identifier("Table1")
+
+
+def test_is_safe_identifier_rejects_injection_attempts():
+    assert not connectors.is_safe_identifier("id; DROP TABLE users;--")
+    assert not connectors.is_safe_identifier("id\"; --")
+    assert not connectors.is_safe_identifier("1id")
+    assert not connectors.is_safe_identifier("")
+    assert not connectors.is_safe_identifier(None)
+
+
+def test_quote_identifier_rejects_unsafe_input():
+    with pytest.raises(ValueError):
+        connectors.quote_identifier("id; DROP TABLE users;--")
+
+
+def test_quote_identifier_quotes_safe_input():
+    assert connectors.quote_identifier("customer_id") == '"customer_id"'
+
+
+def test_build_select_query_star_and_limit():
+    q = connectors.build_select_query("customers", limit=100, offset=200)
+    assert q == 'SELECT * FROM "customers" LIMIT 100 OFFSET 200'
+
+
+def test_build_select_query_with_schema_and_columns():
+    q = connectors.build_select_query("customers", columns=["id", "name"], schema="public")
+    assert q == 'SELECT "id", "name" FROM "public"."customers"'
+
+
+def test_build_select_query_rejects_unsafe_table_name():
+    with pytest.raises(ValueError):
+        connectors.build_select_query("customers; DROP TABLE users;--")
+
+
+def test_chunk_offsets_even_division():
+    assert connectors.chunk_offsets(100, 25) == [(0, 25), (25, 25), (50, 25), (75, 25)]
+
+
+def test_chunk_offsets_uneven_division():
+    assert connectors.chunk_offsets(105, 25) == [(0, 25), (25, 25), (50, 25), (75, 25), (100, 5)]
+
+
+def test_chunk_offsets_empty_when_no_rows():
+    assert connectors.chunk_offsets(0, 25) == []
+
+
+def test_chunk_offsets_smaller_than_one_chunk():
+    assert connectors.chunk_offsets(10, 25) == [(0, 10)]
