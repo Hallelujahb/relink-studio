@@ -2021,7 +2021,7 @@ export default function RelinkStudio() {
       },
       linking_shape: shape,
       chain_steps: shape !== "single" ? chainSteps : [],
-      methods: [methodA && "fuzzy", methodB && "recordlinkage", methodC && "linktransformer", methodD && "geometry_corroboration", methodE && "splink"].filter(Boolean),
+      methods: [methodA && "fuzzy", methodB && "recordlinkage", methodD && "geometry_corroboration", methodE && "splink"].filter(Boolean),
       thresholds: { auto_approve: autoApprove, needs_review: needsReview },
       matching: { blocking_floor: blockingFloor, keep_digits: keepDigits, strip_parentheticals: stripParens, strip_suffix_words: stripSuffixWords, case_sensitive: caseSensitive },
       safety: { collision_guard: collisionGuard, auto_downgrade_ties: autoDowngradeTies, require_hierarchy_match: requireHierarchyMatch, strict_zone_match: strictZoneMatch, flag_low_coverage_zones: flagLowCoverageZones },
@@ -2061,7 +2061,6 @@ export default function RelinkStudio() {
         if (c.methods) {
           setMethodA(c.methods.includes("fuzzy"));
           setMethodB(c.methods.includes("recordlinkage"));
-          setMethodC(c.methods.includes("linktransformer"));
           setMethodD(c.methods.includes("geometry_corroboration"));
           setMethodE(c.methods.includes("splink"));
         }

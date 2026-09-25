@@ -75,7 +75,7 @@ components:
           type: array
           items:
             type: string
-            enum: [fuzzy, recordlinkage, linktransformer, geometry_corroboration, splink]
+            enum: [fuzzy, recordlinkage, geometry_corroboration, splink]
         thresholds:
           type: object
           properties:

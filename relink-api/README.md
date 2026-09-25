@@ -88,13 +88,6 @@ snapshot), `audit_log`, `users`, `sessions`.
   `calibrated: false`) when EM training can't converge, which is common
   on small datasets -- this was observed for real during testing, not
   hypothesized.
-- Method C (linktransformer) -- implementation is based on reading the
-  library's actual source (`infer.py`) to confirm the real call signature
-  and output columns, not a guess. Could NOT be executed end-to-end in
-  this sandbox: installing its full dependency chain (torch, faiss,
-  sentence-transformers) exceeded available disk space, and it needs
-  Hugging Face Hub network access this sandbox doesn't have. Test it for
-  real before trusting its output.
 - Nominatim lookup (`POST /api/geocode`) -- rate-limited to 1 req/sec,
   single-row only. Verified reachable from this sandbox, but Nominatim
   itself returned 403 Forbidden on the test call (their bot/abuse

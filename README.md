@@ -31,14 +31,6 @@ chmod +x setup_relink_studio.sh
 
 That starts the backend on `http://localhost:5000` and the frontend on `http://localhost:5173`. Open the frontend URL in a browser and you're in.
 
-If you want the embeddings-based matching method (Method C, more on that below) installed on first run, use:
-
-```bash
-./setup_relink_studio.sh --with-linktransformer
-```
-
-Fair warning, that pulls in torch, faiss, and sentence-transformers, which together are several gigabytes. It's entirely optional and the tool works fine without it for most use cases.
-
 ## Running locally vs. on your LAN
 
 Relink is local-first: everything runs on your own machine, and it stays that way whether you use it alone or share it with a couple of coworkers on the same office network. There's no cloud component and no external AI service involved anywhere in the pipeline -- matching runs entirely with the local methods described below, and nothing about a project (your files, matches, or review decisions) ever leaves the machine Relink is running on unless you export a file yourself.
@@ -110,7 +102,6 @@ This is where you tell the tool how confident it needs to be before it trusts a 
 
 - **Method A, difflib**: character-level fuzzy matching using Python's built-in `difflib`. No extra dependencies, and it's the best general-purpose default for spelling variants and small formatting differences. On by default.
 - **Method B, recordlinkage**: a second, differently tuned distance measure, meant to corroborate what Method A finds rather than replace it. Also on by default.
-- **Method C, linktransformer**: semantic matching using sentence embeddings. Good for cases where two names mean the same thing but don't share much spelling, though in practice it tends to be weaker than A or B on close spelling variants and can occasionally collapse two genuinely different records onto the same wrong neighbor. Best treated as a secondary signal rather than something to rely on by itself. Off by default, and needs the optional install mentioned above.
 - **Method D, geometry corroboration**: not a name scorer at all. If both files have real latitude/longitude or polygon geometry, this flags a candidate as suspicious when its coordinates sit unexpectedly far from the source record's location, even if the name matched perfectly. Useful as a sanity check, especially for place-based data where two very differently located things can coincidentally have similar names.
 - **Method E, splink**: a probabilistic matcher based on the Fellegi-Sunter model, which learns how much weight each field should carry from the actual data rather than using a fixed formula. Worth turning on once linking tens of thousands of rows or more. For smaller datasets, A and B are simpler and just as effective, so this stays off by default.
 
@@ -142,7 +133,6 @@ Both Method A and Method B use a blocking key to avoid comparing every source ro
 
 ## Known limitations
 
-- Method C (linktransformer) is wired into the backend but has not been fully verified end to end, since it needs to download a model from Hugging Face and that isn't available in every environment. It should work, but test it before relying on it for anything important.
 - Method E (splink) is an optional dependency, not installed by default. Install it with `pip install -r relink-api/requirements-optional.txt` inside the backend's virtual environment if you want it.
 - Geometry corroboration (Method D) only kicks in when both your source and target files are GeoJSON with actual geometry in them. Plain latitude and longitude columns in a CSV won't trigger it, since the tool needs real geometry objects to compute distances from.
 - The Nominatim lookup button in the review queue is rate limited to one request per second, per OpenStreetMap's usage policy. Set the `RELINK_NOMINATIM_USER_AGENT` environment variable to real contact information (your name plus an email or project URL) before relying on it for anything beyond occasional testing.

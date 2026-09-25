@@ -57,3 +57,6 @@ Thumbs.db
 
 # --- Bundled sample datasets not meant to be published ---
 test-dataset/*.csv
+*.pyc
+relink-api/data/*.sqlite3*
+node_modules/

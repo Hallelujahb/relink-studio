@@ -1245,7 +1245,6 @@ function TabReviewQueue(props) {
         <div className="grid grid-cols-3 gap-3">
           <MethodColumn label="Method A" engine="difflib" data={selected.methods.A} accent="var(--method-a)" isChosen={selected.chosenMethod === "A"} onChoose={() => chooseMethod("A")} />
           <MethodColumn label="Method B" engine="recordlinkage" data={selected.methods.B} accent="var(--method-b)" isChosen={selected.chosenMethod === "B"} onChoose={() => chooseMethod("B")} />
-          <MethodColumn label="Method C" engine="linktransformer" data={selected.methods.C} accent="var(--method-c)" isChosen={selected.chosenMethod === "C"} onChoose={() => chooseMethod("C")} />
         </div>
         <div className="text-xs muted mt-2">Click a method card to select it as the final match for this row.</div>
       </div>
@@ -1880,7 +1879,7 @@ export default function RelinkStudio() {
       },
       linking_shape: shape,
       chain_steps: shape !== "single" ? chainSteps : [],
-      methods: [methodA && "fuzzy", methodB && "recordlinkage", methodC && "linktransformer", methodD && "geometry_corroboration", methodE && "splink"].filter(Boolean),
+      methods: [methodA && "fuzzy", methodB && "recordlinkage", methodD && "geometry_corroboration", methodE && "splink"].filter(Boolean),
       thresholds: { auto_approve: autoApprove, needs_review: needsReview },
       matching: { blocking_floor: blockingFloor, keep_digits: keepDigits, strip_parentheticals: stripParens, strip_suffix_words: stripSuffixWords, case_sensitive: caseSensitive },
       safety: { collision_guard: collisionGuard, auto_downgrade_ties: autoDowngradeTies, require_hierarchy_match: requireHierarchyMatch, strict_zone_match: strictZoneMatch, flag_low_coverage_zones: flagLowCoverageZones },
@@ -1920,7 +1919,6 @@ export default function RelinkStudio() {
         if (c.methods) {
           setMethodA(c.methods.includes("fuzzy"));
           setMethodB(c.methods.includes("recordlinkage"));
-          setMethodC(c.methods.includes("linktransformer"));
           setMethodD(c.methods.includes("geometry_corroboration"));
           setMethodE(c.methods.includes("splink"));
         }

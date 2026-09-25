@@ -24,7 +24,7 @@ import re
 from difflib import SequenceMatcher
 
 
-NOT_IMPLEMENTED_METHODS = set()  # kept for backwards import compatibility; both C and E now have real (optional) implementations
+NOT_IMPLEMENTED_METHODS = set()  # kept for backwards import compatibility; Method E now has a real (optional) implementation
 
 
 # --------------------------------------------------------------------- #
