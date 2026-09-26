@@ -35,7 +35,7 @@ POST /api/db/ingest              -- pull the table and register it as a file
 
 All three take the same JSON body shape:
     {
-      "provider": "postgresql" | "clickhouse",
+      "provider": "postgresql" | "clickhouse" | "mysql",
       "host": "...", "port": 5432, "database": "...",
       "schema": "public",        # optional
       "table": "...",             # required for /schema and /ingest
@@ -56,16 +56,22 @@ Security notes
 - This does not loosen or bypass RELINK_REQUIRE_AUTH: in --lan mode with
   auth on, these routes require a bearer token exactly like every other
   /api route (via the existing @require_auth() decorator).
-- Real capability, not a guess: if psycopg2 / clickhouse-connect aren't
-  installed on the backend, every route here returns a clear 501 (the
-  same ProviderUnavailable pattern app.matching_splink.py already uses
-  for the optional Method E dependency) rather than a confusing 500.
+- Real capability, not a guess: if psycopg2 / clickhouse-connect /
+  mysql-connector-python aren't installed on the backend, every route
+  here returns a clear 501 (the same ProviderUnavailable pattern
+  app.matching_splink.py already uses for the optional Method E
+  dependency) rather than a confusing 500.
 
 Known limitation, carried over honestly from app/connectors.py's own
 docstring: the ClickHouse path (query_row_block_stream()) has not been
 exercised against a real ClickHouse instance in this codebase -- test it
-against yours before relying on it. The Postgres path uses psycopg2's
-well-known, stable API and is the more trustworthy of the two.
+against yours before relying on it. The MySQLProvider is new and,
+likewise, has not been run against a live MySQL/MariaDB server here --
+its shape mirrors PostgresProvider closely (mysql-connector-python's
+cursor/parameterized-query API is very close to psycopg2's), so it
+should be the more predictable of the two unverified paths, but test it
+before relying on it too. The Postgres path uses psycopg2's well-known,
+stable API and remains the most trustworthy of the three.
 """
 import json
 import uuid
@@ -81,7 +87,7 @@ from .parsers import save_parsed_payload
 bp = Blueprint("api_db_ingest", __name__)
 
 DEFAULT_ROW_LIMIT = 100_000
-_VALID_PROVIDERS = ("postgresql", "clickhouse")
+_VALID_PROVIDERS = ("postgresql", "clickhouse", "mysql")
 
 
 def _uid():
@@ -219,4 +225,5 @@ def db_ingest():
         "row_count": len(rows), "format": provider_name, "has_geometry": False,
         "truncated": truncated,
     }), 201
+
 

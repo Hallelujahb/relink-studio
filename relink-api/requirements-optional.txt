@@ -9,3 +9,6 @@ psycopg2-binary
 
 # Optional -- enables the ClickHouse direct-ingest connector (/api/db/*).
 clickhouse-connect
+
+# Optional -- enables the MySQL/MariaDB direct-ingest connector (/api/db/*).
+mysql-connector-python

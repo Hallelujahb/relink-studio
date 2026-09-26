@@ -677,15 +677,11 @@ function Spinner() {
   );
 }
 
-const DB_PROVIDER_DEFAULT_PORTS = { postgresql: 5432, clickhouse: 8123, mysql: 3306 };
-
-/* Pure form -- no open/close state of its own. The dropzone box in       */
-/* FilePickerCard owns whether this or the regular upload view is shown,  */
-/* so the two share one box instead of stacking as separate panels.       */
-function DbImportForm({ onBack, onIngested, setToast }) {
+function DbImportPanel({ onIngested, setToast }) {
+  const [open, setOpen] = useState(false);
   const [provider, setProvider] = useState("postgresql");
   const [host, setHost] = useState("localhost");
-  const [port, setPort] = useState(DB_PROVIDER_DEFAULT_PORTS.postgresql);
+  const [port, setPort] = useState(5432);
   const [database, setDatabase] = useState("");
   const [schemaField, setSchemaField] = useState("");
   const [table, setTable] = useState("");
@@ -696,7 +692,7 @@ function DbImportForm({ onBack, onIngested, setToast }) {
   const [isBusy, setIsBusy] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
-  useEffect(() => { setPort(DB_PROVIDER_DEFAULT_PORTS[provider] || ""); }, [provider]);
+  useEffect(() => { setPort(provider === "postgresql" ? 5432 : 8123); }, [provider]);
 
   function connConfig() {
     return {
@@ -732,6 +728,7 @@ function DbImportForm({ onBack, onIngested, setToast }) {
           ? `Imported the first ${res.row_count.toLocaleString()} row(s) from ${provider}:${table} (row limit reached -- raise it to pull more).`
           : `Imported ${res.row_count.toLocaleString()} row(s) from ${provider}:${table}.`
       );
+      setOpen(false);
     } catch (err) {
       setToast(`Database import failed: ${err.message}`);
     } finally {
@@ -739,21 +736,24 @@ function DbImportForm({ onBack, onIngested, setToast }) {
     }
   }
 
-  return (
-    <div style={{ width: "100%", textAlign: "left" }} className="flex flex-col gap-2">
-      <button
-        type="button"
-        onClick={onBack}
-        className="text-xs flex items-center gap-1"
-        style={{ border: "none", background: "none", padding: 0, color: "var(--text-muted)", alignSelf: "flex-start" }}
-      >
-        &larr; Back to file upload
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="text-xs mt-2" style={{ textDecoration: "underline", color: "var(--text-muted)" }}>
+        Or import a table from Postgres / ClickHouse
       </button>
+    );
+  }
+
+  return (
+    <div className="surf2 border b rounded-lg p-3 mt-2 flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold muted uppercase tracking-wide">Import from database</span>
+        <button onClick={() => setOpen(false)} className="text-xs muted">&times;</button>
+      </div>
       <div className="flex gap-2">
         <select value={provider} onChange={(e) => setProvider(e.target.value)} className="surf border b rounded-md text-xs px-2 py-1.5 flex-1">
           <option value="postgresql">PostgreSQL</option>
           <option value="clickhouse">ClickHouse</option>
-          <option value="mysql">MySQL / MariaDB</option>
         </select>
         <label className="flex items-center gap-1.5 text-xs muted whitespace-nowrap">
           <input type="checkbox" checked={ssl} onChange={(e) => setSsl(e.target.checked)} /> SSL
@@ -765,7 +765,7 @@ function DbImportForm({ onBack, onIngested, setToast }) {
       </div>
       <input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="database" className="surf border b rounded-md text-xs px-2 py-1.5" />
       <div className="flex gap-2">
-        <input value={schemaField} onChange={(e) => setSchemaField(e.target.value)} placeholder={provider === "mysql" ? "schema (unused for MySQL)" : "schema (optional)"} disabled={provider === "mysql"} className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" style={provider === "mysql" ? { opacity: 0.5 } : {}} />
+        <input value={schemaField} onChange={(e) => setSchemaField(e.target.value)} placeholder="schema (optional)" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
         <input value={table} onChange={(e) => setTable(e.target.value)} placeholder="table" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
       </div>
       <div className="flex gap-2">
@@ -791,9 +791,9 @@ function DbImportForm({ onBack, onIngested, setToast }) {
         </button>
       </div>
       <div className="text-xs muted">
-        Runs through the backend's own database drivers (psycopg2 / clickhouse-connect / mysql-connector-python --
-        whichever match the provider above -- must be installed there; see <code>/api/connectors/capabilities</code>).
-        Credentials are sent once for this request and are never stored or logged by ReLink.
+        Runs through the backend's own database drivers (psycopg2 / clickhouse-connect must be installed there --
+        see <code>/api/connectors/capabilities</code>). Credentials are sent once for this request and are never
+        stored or logged by ReLink.
       </div>
     </div>
   );
@@ -804,7 +804,6 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
   const [pendingName, setPendingName] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const dragDepth = useRef(0);
-  const [mode, setMode] = useState("upload"); // "upload" | "db" -- which view the box shows
 
   function processFile(f) {
     if (!f) return;
@@ -883,7 +882,6 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
       setToast(`${f.name} isn't one of the accepted types (.csv, .xlsx, .xls, .geojson, .json).`);
       return;
     }
-    setMode("upload");
     processFile(f);
   }
 
@@ -908,58 +906,42 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`surf2 border b rounded-lg px-3 flex flex-col mb-4 ${mode === "db" ? "py-4" : "py-6"}`}
+        className="surf2 border b rounded-lg px-3 py-6 flex flex-col items-center justify-center mb-4"
         style={{
-          alignItems: mode === "db" ? "stretch" : "center",
-          justifyContent: mode === "db" ? "flex-start" : "center",
-          borderStyle: mode === "upload" && isDragOver ? "dashed" : "solid",
-          borderColor: mode === "upload" && isDragOver ? "var(--primary)" : undefined,
-          background: mode === "upload" && isDragOver ? "var(--primary-soft)" : undefined,
+          borderStyle: isDragOver ? "dashed" : "solid",
+          borderColor: isDragOver ? "var(--primary)" : undefined,
+          background: isDragOver ? "var(--primary-soft)" : undefined,
           transition: "background-color .1s ease, border-color .1s ease",
         }}
       >
-        {mode === "db" ? (
-          <DbImportForm
-            onBack={() => setMode("upload")}
-            setToast={setToast}
-            onIngested={(res) => {
-              setFile({ name: res.filename, format: res.format, rowCount: res.row_count, columns: res.columns, geometry: null, geometryRows: null, fileId: res.file_id, uploadError: null });
-              setIdColumn(res.columns[0] || "");
-              setMatchColumn(res.columns[1] || res.columns[0] || "");
-              setHierarchy([]);
-              setMode("upload");
-            }}
-          />
+        {isParsing ? (
+          <>
+            <Spinner />
+            <div className="text-sm font-medium mt-2">Parsing {pendingName}...</div>
+            <div className="text-xs muted mt-1">Large files can take a moment. This tab may pause while it works.</div>
+          </>
         ) : (
           <>
-            {isParsing ? (
-              <>
-                <Spinner />
-                <div className="text-sm font-medium mt-2">Parsing {pendingName}...</div>
-                <div className="text-xs muted mt-1">Large files can take a moment. This tab may pause while it works.</div>
-              </>
-            ) : (
-              <>
-                <div className="text-sm font-medium">{file.name}</div>
-                <div className="text-xs muted mt-1">{file.rowCount.toLocaleString()} rows detected</div>
-                <div className="text-xs muted mt-1">{isDragOver ? "Drop to upload" : "Drag a file here, or"}</div>
-              </>
-            )}
-            <label className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-3" style={isParsing ? { opacity: 0.5, pointerEvents: "none" } : {}}>
-              {isParsing ? "Parsing..." : "Upload file"}
-              <input type="file" accept=".csv,.xlsx,.xls,.geojson,.json" onChange={handleUpload} className="hidden" disabled={isParsing} />
-            </label>
-            <button
-              type="button"
-              onClick={() => setMode("db")}
-              className="text-xs mt-3"
-              style={{ border: "none", background: "none", padding: 0, textDecoration: "underline", color: "var(--text-muted)" }}
-            >
-              Or import a table from Postgres / ClickHouse / MySQL
-            </button>
+            <div className="text-sm font-medium">{file.name}</div>
+            <div className="text-xs muted mt-1">{file.rowCount.toLocaleString()} rows detected</div>
+            <div className="text-xs muted mt-1">{isDragOver ? "Drop to upload" : "Drag a file here, or"}</div>
           </>
         )}
+        <label className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-3" style={isParsing ? { opacity: 0.5, pointerEvents: "none" } : {}}>
+          {isParsing ? "Parsing..." : "Upload file"}
+          <input type="file" accept=".csv,.xlsx,.xls,.geojson,.json" onChange={handleUpload} className="hidden" disabled={isParsing} />
+        </label>
       </div>
+
+      <DbImportPanel
+        setToast={setToast}
+        onIngested={(res) => {
+          setFile({ name: res.filename, format: res.format, rowCount: res.row_count, columns: res.columns, geometry: null, geometryRows: null, fileId: res.file_id, uploadError: null });
+          setIdColumn(res.columns[0] || "");
+          setMatchColumn(res.columns[1] || res.columns[0] || "");
+          setHierarchy([]);
+        }}
+      />
 
       <div className="flex flex-col gap-3">
         <label className="flex flex-col gap-1.5">

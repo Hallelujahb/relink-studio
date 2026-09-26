@@ -129,20 +129,11 @@ def detect_clickhouse_capability():
         return {"available": False, "driver": None, "reason": f"clickhouse_connect not installed ({e})"}
 
 
-def detect_mysql_capability():
-    try:
-        import mysql.connector  # noqa: F401
-        return {"available": True, "driver": "mysql.connector", "reason": None}
-    except ImportError as e:
-        return {"available": False, "driver": None, "reason": f"mysql-connector-python not installed ({e})"}
-
-
 def list_capabilities():
     return {
         "file": {"available": True, "driver": "pandas/openpyxl", "reason": None},
         "postgresql": detect_postgres_capability(),
         "clickhouse": detect_clickhouse_capability(),
-        "mysql": detect_mysql_capability(),
     }
 
 
@@ -368,127 +359,9 @@ class ClickHouseProvider(BaseProvider):
                 yield buffer
 
 
-class MySQLProvider(BaseProvider):
-    """Uses mysql-connector-python. Its cursor/parameterized-query API
-    (connect(), cursor(), %s placeholders, cursor.fetchall()) is close
-    enough to psycopg2's that this mirrors PostgresProvider almost line
-    for line -- the main real difference is identifier quoting (MySQL
-    uses backticks by default, not double quotes) and that MySQL has no
-    separate schema concept: a "database" already is the schema, so
-    config.schema is accepted for symmetry with the other providers but
-    ignored here.
-
-    Not verified against a live MySQL/MariaDB server in this codebase --
-    same caveat as ClickHouseProvider above. The API surface used here is
-    small and well-documented, so it should be the more predictable of
-    the two unverified providers, but test it before relying on it."""
-
-    name = "mysql"
-
-    def __init__(self, config: ConnectionConfig):
-        cap = detect_mysql_capability()
-        if not cap["available"]:
-            raise ProviderUnavailable(
-                "MySQL/MariaDB support requires 'mysql-connector-python', which is not "
-                "installed. Install it and restart the API to enable this connector -- no "
-                "connection was attempted."
-            )
-        errors = config.validate()
-        if errors:
-            raise ValueError("Invalid MySQL connection config: " + "; ".join(errors))
-        self.config = config
-
-    def _connect(self):
-        import mysql.connector
-        return mysql.connector.connect(
-            host=self.config.host, port=self.config.port, database=self.config.database,
-            user=self.config.username, password=self.config.password,
-            ssl_disabled=not self.config.ssl, connection_timeout=5,
-        )
-
-    def test_connection(self) -> dict:
-        conn = self._connect()
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT 1")
-            cur.fetchone()
-            cur.close()
-            return {"ok": True, "config": redact_connection_config(self.config.__dict__)}
-        finally:
-            conn.close()
-
-    def discover_schema(self) -> dict:
-        if not self.config.table:
-            raise ValueError("config.table is required to discover a schema")
-        conn = self._connect()
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
-                "WHERE table_name = %s AND table_schema = %s ORDER BY ordinal_position",
-                (self.config.table, self.config.database),
-            )
-            rows = cur.fetchall()
-            cur.close()
-            return {
-                "fields": [{"name": r[0], "dtype": r[1], "nullable": r[2] == "YES"} for r in rows],
-                "field_count": len(rows),
-            }
-        finally:
-            conn.close()
-
-    def estimate_row_count(self) -> Optional[int]:
-        if not self.config.table:
-            raise ValueError("config.table is required to estimate a row count")
-        conn = self._connect()
-        try:
-            cur = conn.cursor()
-            # information_schema.tables' TABLE_ROWS is an estimate for
-            # InnoDB (like Postgres's reltuples), not an exact COUNT(*) --
-            # deliberately avoids a full table scan.
-            cur.execute(
-                "SELECT table_rows FROM information_schema.tables WHERE table_name = %s AND table_schema = %s",
-                (self.config.table, self.config.database),
-            )
-            row = cur.fetchone()
-            cur.close()
-            return int(row[0]) if row and row[0] is not None else None
-        finally:
-            conn.close()
-
-    def extract_chunks(self, chunk_size: int = 5000, cancel_token=None):
-        if not self.config.table:
-            raise ValueError("config.table is required to extract data")
-        conn = self._connect()
-        try:
-            offset = 0
-            while True:
-                if cancel_token is not None and cancel_token.is_set():
-                    return
-                cur = conn.cursor(dictionary=True)
-                # MySQL quotes identifiers with backticks by default (not
-                # double quotes, unless ANSI_QUOTES sql_mode is set) --
-                # pass quote_char explicitly rather than relying on
-                # build_select_query's Postgres-flavored default.
-                query = build_select_query(self.config.table, limit=chunk_size, offset=offset, quote_char="`")
-                cur.execute(query)
-                rows = cur.fetchall()
-                cur.close()
-                if not rows:
-                    return
-                yield rows
-                offset += len(rows)
-                if len(rows) < chunk_size:
-                    return
-        finally:
-            conn.close()
-
-
 def get_provider(name: str, config: Optional[ConnectionConfig] = None) -> BaseProvider:
     if name == "postgresql":
         return PostgresProvider(config)
     if name == "clickhouse":
         return ClickHouseProvider(config)
-    if name == "mysql":
-        return MySQLProvider(config)
     raise ValueError(f"Unknown provider: {name}")
