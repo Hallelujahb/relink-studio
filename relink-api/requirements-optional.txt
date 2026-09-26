@@ -3,3 +3,9 @@
 # E just returns a clear 'Method E requires...' error until it is.
 splink==4.0.16
 
+
+# Optional -- enables the PostgreSQL direct-ingest connector (/api/db/*).
+psycopg2-binary
+
+# Optional -- enables the ClickHouse direct-ingest connector (/api/db/*).
+clickhouse-connect

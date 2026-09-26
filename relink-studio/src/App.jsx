@@ -4,24 +4,60 @@ import * as XLSX from "xlsx";
 
 /* ---------------------------------------------------------------------- */
 /* Backend wiring                                                        */
-/* Talks to the relink-api Flask backend (see ../relink-api). Change      */
-/* API_BASE if you run the backend on a different host/port.             */
+/* Talks to the relink-api Flask backend (see ../relink-api). The base    */
+/* URL defaults to whatever host this page itself was loaded from (port   */
+/* 5000) rather than a hardcoded "localhost" -- that's what makes opening */
+/* this frontend from a teammate's machine against a --lan backend work   */
+/* without editing source. It can also be overridden from the connection  */
+/* status panel in the top bar (persisted in localStorage), for cases     */
+/* where the frontend and backend aren't on the same host.                */
 /* ---------------------------------------------------------------------- */
 
-const API_BASE = "http://localhost:5000/api";
+function defaultApiBase() {
+  if (typeof window !== "undefined" && window.location && window.location.hostname) {
+    return `http://${window.location.hostname}:5000/api`;
+  }
+  return "http://localhost:5000/api";
+}
 
-class ApiError extends Error {}
+const _conn = {
+  base: (typeof localStorage !== "undefined" && localStorage.getItem("relink_api_base")) || defaultApiBase(),
+  token: (typeof localStorage !== "undefined" && localStorage.getItem("relink_auth_token")) || null,
+};
+
+function getApiBase() { return _conn.base; }
+function setApiBase(base) {
+  _conn.base = base;
+  try { localStorage.setItem("relink_api_base", base); } catch { /* private browsing, etc. */ }
+}
+function getAuthToken() { return _conn.token; }
+function setAuthToken(token) {
+  _conn.token = token;
+  try {
+    if (token) localStorage.setItem("relink_auth_token", token);
+    else localStorage.removeItem("relink_auth_token");
+  } catch { /* private browsing, etc. */ }
+}
+
+class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+  }
+}
 
 async function apiFetch(path, options = {}) {
   let res;
+  const headers = {};
+  if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
+  if (_conn.token) headers["Authorization"] = `Bearer ${_conn.token}`;
   try {
-    res = await fetch(`${API_BASE}${path}`, {
-      headers: options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : undefined,
-      ...options,
-    });
+    res = await fetch(`${_conn.base}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } });
   } catch (e) {
     throw new ApiError(
-      `Could not reach the backend at ${API_BASE}${path}. Is relink-api running (python run.py)?`
+      `Could not reach the backend at ${_conn.base}${path}. Is relink-api running, and is this address reachable ` +
+      `from your machine? Check the connection status in the top bar -- in LAN mode the backend's CORS ` +
+      `origins also need to include this frontend's address (RELINK_CORS_ORIGINS).`
     );
   }
   if (!res.ok) {
@@ -30,7 +66,11 @@ async function apiFetch(path, options = {}) {
       const body = await res.json();
       if (body && body.error) message = body.error;
     } catch { /* non-JSON error body, keep default message */ }
-    throw new ApiError(message);
+    if (res.status === 401) {
+      setAuthToken(null);
+      message = "Authentication required (or your session expired). Sign in from the connection status panel in the top bar.";
+    }
+    throw new ApiError(message, res.status);
   }
   return res;
 }
@@ -46,19 +86,47 @@ async function uploadFileToBackend(file) {
   return apiJson("/upload", { method: "POST", body: form });
 }
 
+/* GET /health is always unauthenticated by design (see relink-api), so   */
+/* this never needs a token -- it's what powers the connection-status     */
+/* pill: which mode the backend is running in, and whether it requires    */
+/* sign-in at all.                                                       */
+async function checkBackendHealth() {
+  const root = _conn.base.replace(/\/api\/?$/, "");
+  let res;
+  try {
+    res = await fetch(`${root}/health`);
+  } catch (e) {
+    throw new Error(`Could not reach ${root}/health.`);
+  }
+  if (!res.ok) throw new Error(`Health check failed (${res.status}).`);
+  return res.json(); // { status, mode: "local"|"lan", auth_required: bool }
+}
+
+async function loginToBackend(username, password) {
+  return apiJson("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+}
+
 /* ---------------------------------------------------------------------- */
 /* Shared tokens and primitives                                          */
 /* ---------------------------------------------------------------------- */
 
 const TOKENS_CSS = `
+  /* The whole app is one fixed-height flex column with its own internal
+     scroll regions (TopBar, the active tab's content, NavFooter). If the
+     surrounding page is ever allowed to scroll too -- which happens the
+     moment html/body have their default margin and auto height -- you get
+     two scrollbars fighting each other and the top bar visibly drifts.
+     Locking the page itself down here means it can't happen regardless of
+     what (if anything) the host page's own stylesheet does. */
+  html, body, #root { height: 100%; margin: 0; overflow: hidden; }
   .rls[data-theme="dark"] {
     --bg: #0D0F13; --surface: #15181E; --surface-2: #1B1F27; --surface-hover: #232833;
     --border: #262B35; --border-strong: #333A47;
     --text: #E7EAEE; --text-muted: #8B93A3;
     --primary: #3B82F6; --primary-hover: #60A5FA; --primary-soft: #1B2B4D;
-    --success: #22C55E; --success-soft: #12281A;
+    --success: #22C55E; --success-soft: #12281A; --success-border: #3A7A57;
     --warning: #F59E0B; --warning-soft: #2E2411;
-    --danger: #EF4444; --danger-soft: #341418;
+    --danger: #EF4444; --danger-soft: #341418; --danger-border: #93414D;
     --method-a: #3B82F6; --method-b: #14B8A6; --method-c: #A78BFA; --method-d: #FB923C; --method-e: #818CF8;
     --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.25);
   }
@@ -71,9 +139,9 @@ const TOKENS_CSS = `
     --border: #DCDACF; --border-strong: #C7C4B5;
     --text: #33322C; --text-muted: #726F62;
     --primary: #2563EB; --primary-hover: #1D4ED8; --primary-soft: #E3E9F9;
-    --success: #16A34A; --success-soft: #E7F3EA;
+    --success: #16A34A; --success-soft: #E7F3EA; --success-border: #7FA88E;
     --warning: #B4620A; --warning-soft: #F7EEE0;
-    --danger: #C4331F; --danger-soft: #F6E7E3;
+    --danger: #C4331F; --danger-soft: #F6E7E3; --danger-border: #B98178;
     --method-a: #2563EB; --method-b: #0D9488; --method-c: #7C3AED; --method-d: #B4620A; --method-e: #4338CA;
     --shadow: 0 1px 2px rgba(40,35,20,0.05), 0 4px 10px rgba(40,35,20,0.05);
   }
@@ -101,10 +169,15 @@ const TOKENS_CSS = `
      method's own accent color was chosen -- always the same green glow
      regardless of which method card it's applied to, so approval reads
      as approval at a glance rather than blending into method branding. */
-  .approvedGlow { animation: approvedPulse .4s ease-out; box-shadow: 0 0 0 2px var(--success), 0 0 14px 1px color-mix(in srgb, var(--success) 45%, transparent); }
+  .approvedGlow { animation: approvedPulse .15s ease-out; box-shadow: 0 0 0 2px var(--success), 0 0 14px 1px color-mix(in srgb, var(--success) 45%, transparent); }
   @keyframes approvedPulse { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 60%, transparent); } to { box-shadow: 0 0 0 2px var(--success), 0 0 14px 1px color-mix(in srgb, var(--success) 45%, transparent); } }
   @keyframes toastIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes rowIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } }
+  /* Decide-then-vanish: a row flashes its decided color, holds just long
+     enough to register, then collapses away fast. Kept snappy on purpose
+     -- this fires on every approve/reject click, so it can't feel laggy. */
+  .rowExiting { animation: rowExit .14s ease-in forwards; }
+  @keyframes rowExit { from { opacity: 1; transform: scaleY(1); max-height: 80px; } to { opacity: 0; transform: scaleY(0.9); max-height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; } }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .switch { width: 38px; height: 22px; border-radius: 999px; position: relative; transition: background-color .15s ease; cursor: pointer; flex-shrink: 0; }
   .switch-knob { width: 18px; height: 18px; border-radius: 999px; background: white; position: absolute; top: 2px; transition: left .15s ease; }
@@ -159,7 +232,7 @@ function Toast({ toast, onDone }) {
   }, [toast, onDone, hasUndo]);
 
   return (
-    <div className="toast fixed bottom-4 right-4 surf card border px-4 py-2.5 text-sm z-50 flex items-center gap-3">
+    <div className="toast fixed bottom-4 left-1/2 surf card border px-4 py-2.5 text-sm z-50 flex items-center gap-3" style={{ transform: "translateX(-50%)", maxWidth: "calc(100vw - 32px)" }}>
       <span>{message}</span>
       {hasUndo && (
         <button onClick={() => { toast.undo(); onDone(); }} className="btn btn-ghost text-xs font-medium px-2.5 py-1 flex-shrink-0">
@@ -243,11 +316,105 @@ function ThresholdSlider({ label, value, setValue, accent }) {
   );
 }
 
-const TAB_LABELS = ["Sources & shape", "Hierarchy & methods", "Safety & rules", "Review & finalize", "Export & audit"];
+const TAB_LABELS = ["Sources & shape", "Hierarchy & methods", "Safety & rules", "Review queue", "Approve & finalize", "Export & audit"];
 
-function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged }) {
+function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChecking, onRefresh, isAuthenticated, authUser, onLogin, onLogout }) {
+  const [open, setOpen] = useState(false);
+  const [editBase, setEditBase] = useState(apiBase);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  useEffect(() => { setEditBase(apiBase); }, [apiBase]);
+
+  const needsSignIn = !!(health && health.auth_required && !isAuthenticated);
+  let dotColor = "var(--text-muted)";
+  let label = "Checking connection...";
+  if (!isChecking) {
+    if (healthError) {
+      dotColor = "var(--danger)";
+      label = "Backend unreachable";
+    } else if (health) {
+      if (health.mode === "lan") {
+        dotColor = needsSignIn ? "var(--warning)" : "var(--success)";
+        label = needsSignIn ? "LAN mode \u00b7 sign-in required" : health.auth_required ? `LAN mode \u00b7 ${authUser || "signed in"}` : "LAN mode \u00b7 auth off";
+      } else {
+        dotColor = "var(--success)";
+        label = "Local only";
+      }
+    }
+  }
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    setIsLoggingIn(true);
+    setLoginError(null);
+    try {
+      await onLogin(username, password);
+      setPassword("");
+    } catch (err) {
+      setLoginError(err.message);
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }
+
   return (
-    <>
+    <div style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex items-center gap-1.5"
+        title="Backend connection status"
+      >
+        <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />
+        {label}
+      </button>
+      {open && (
+        <div className="card surf border p-3" style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, width: "300px", zIndex: 60 }}>
+          <div className="text-xs font-semibold muted uppercase tracking-wide mb-2">Backend connection</div>
+
+          <label className="flex flex-col gap-1 mb-2">
+            <span className="text-xs muted">Backend URL</span>
+            <input value={editBase} onChange={(e) => setEditBase(e.target.value)} className="surf2 border b rounded-md text-xs px-2 py-1.5" />
+          </label>
+          <div className="flex gap-2 mb-2">
+            <button onClick={() => onApiBaseChange(editBase)} className="btn btn-ghost text-xs font-medium px-2.5 py-1 flex-1">Save &amp; reconnect</button>
+            <button onClick={onRefresh} className="btn btn-ghost text-xs font-medium px-2.5 py-1">Re-check</button>
+          </div>
+
+          {healthError && (
+            <div className="text-xs px-2 py-1.5 rounded-md mb-2" style={{ background: "var(--danger-soft)", color: "var(--danger)" }}>{healthError}</div>
+          )}
+          {health && (
+            <div className="text-xs muted mb-2">
+              Mode: <b>{health.mode}</b> &middot; Auth required: <b>{health.auth_required ? "yes" : "no"}</b>
+              {health.mode === "lan" && (
+                <div className="mt-1">Reachable from other devices on this private network. Never forward this port to the public internet.</div>
+              )}
+            </div>
+          )}
+
+          {needsSignIn && (
+            <form onSubmit={handleLogin} className="flex flex-col gap-1.5 mt-1">
+              <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" autoComplete="username" className="surf2 border b rounded-md text-xs px-2 py-1.5" />
+              <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" type="password" autoComplete="current-password" className="surf2 border b rounded-md text-xs px-2 py-1.5" />
+              {loginError && <div className="text-xs" style={{ color: "var(--danger)" }}>{loginError}</div>}
+              <button type="submit" disabled={isLoggingIn} className="btn btn-primary text-xs font-medium px-2.5 py-1.5">{isLoggingIn ? "Signing in..." : "Sign in"}</button>
+            </form>
+          )}
+          {isAuthenticated && health?.auth_required && (
+            <button onClick={onLogout} className="btn btn-ghost text-xs font-medium px-2.5 py-1 w-full">Sign out{authUser ? ` (${authUser})` : ""}</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged, connection }) {
+  return (
+    <div style={{ position: "sticky", top: 0, zIndex: 30, flexShrink: 0 }}>
       <div className="surf border-b flex items-center justify-between px-5 py-3">
         <div className="flex items-center gap-3">
           <Logo />
@@ -255,10 +422,16 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
           <span className="text-xs muted surf2 border b px-2 py-1 rounded-md">{sourceFile.name} &harr; {targetFile.name}</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs muted flex items-center gap-1.5" title="Your files are read and processed in this browser only. Nothing is uploaded anywhere.">
+          <span
+            className="text-xs muted flex items-center gap-1.5"
+            title={connection.health?.mode === "lan"
+              ? "The backend is bound to this network (--lan mode) so teammates can reach it. Nothing goes to the internet or a third party."
+              : "The backend only accepts connections from this machine. Nothing is uploaded anywhere."}
+          >
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--success)" }} />
-            Runs locally, data never leaves this machine
+            {connection.health?.mode === "lan" ? "Running on your private network \u2014 no cloud, no internet" : "Runs locally, data never leaves this machine"}
           </span>
+          <ConnectionStatus {...connection} />
           <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="btn btn-ghost text-xs font-medium px-3 py-1.5">
             {theme === "dark" ? "Light mode" : "Dark mode"}
           </button>
@@ -289,7 +462,7 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
           return (
             <div key={label} className="flex items-center gap-2">
               <div
-                onClick={() => { if (locked) { setToast('Merge and finalize your review decisions first (tab "Review & finalize").'); return; } setActiveTab(i); }}
+                onClick={() => { if (locked) { setToast('Merge and finalize your review decisions first (tab "Approve & finalize").'); return; } setActiveTab(i); }}
                 className="tab-pill text-xs font-medium px-3.5 py-1.5 whitespace-nowrap"
                 title={locked ? "Locked until you merge and finalize your review decisions." : undefined}
                 style={
@@ -307,7 +480,7 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
           );
         })}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -316,26 +489,30 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
   const isLast = activeTab === TAB_LABELS.length - 1;
   if (isFirst && isLast) return null;
 
+  // A docked, full-width bar flush against the bottom edge -- not a pair
+  // of pill buttons floating with gaps around them. It sits outside the
+  // scrollable tab content (see the root layout below) so it never moves.
   return (
-    <>
-      {!isFirst && (
-        <button
-          onClick={() => setActiveTab(activeTab - 1)}
-          className="btn btn-ghost card text-sm font-medium px-4 py-2.5 border"
-          style={{ position: "fixed", left: "20px", bottom: "20px", zIndex: 40 }}
-        >
-          &larr; Back
-        </button>
-      )}
+    <div
+      className="surf border-t b flex items-center justify-between px-5 py-3"
+      style={{ flexShrink: 0, position: "sticky", bottom: 0, zIndex: 30 }}
+    >
+      <div>
+        {!isFirst && (
+          <button onClick={() => setActiveTab(activeTab - 1)} className="btn btn-ghost text-sm font-medium px-4 py-2">
+            &larr; Back
+          </button>
+        )}
+      </div>
       {!isLast && (
-        <div className="flex items-center gap-3" style={{ position: "fixed", right: "20px", bottom: "20px", zIndex: 40 }}>
+        <div className="flex items-center gap-3">
           {!canContinue && blockedReason && (
-            <span className="text-xs muted card surf border px-3 py-2">{blockedReason}</span>
+            <span className="text-xs muted">{blockedReason}</span>
           )}
           <button
             onClick={() => { if (canContinue) (onContinue ? onContinue() : setActiveTab(activeTab + 1)); }}
             disabled={!canContinue}
-            className="btn btn-primary card text-sm font-medium px-4 py-2.5"
+            className="btn btn-primary text-sm font-medium px-4 py-2"
             style={!canContinue ? { opacity: 0.45, cursor: "not-allowed" } : {}}
             title={!canContinue ? blockedReason : undefined}
           >
@@ -343,7 +520,7 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
           </button>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -500,12 +677,135 @@ function Spinner() {
   );
 }
 
+function DbImportPanel({ onIngested, setToast }) {
+  const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState("postgresql");
+  const [host, setHost] = useState("localhost");
+  const [port, setPort] = useState(5432);
+  const [database, setDatabase] = useState("");
+  const [schemaField, setSchemaField] = useState("");
+  const [table, setTable] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [ssl, setSsl] = useState(false);
+  const [rowLimit, setRowLimit] = useState(50000);
+  const [isBusy, setIsBusy] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
+  useEffect(() => { setPort(provider === "postgresql" ? 5432 : 8123); }, [provider]);
+
+  function connConfig() {
+    return {
+      provider, host, port: Number(port) || null, database,
+      schema: schemaField || null, table, username: username || null,
+      password: password || null, ssl,
+    };
+  }
+
+  async function handleTest() {
+    setIsBusy(true);
+    setTestResult(null);
+    try {
+      await apiJson("/db/test-connection", { method: "POST", body: JSON.stringify(connConfig()) });
+      setTestResult({ ok: true, message: "Connected successfully." });
+    } catch (err) {
+      setTestResult({ ok: false, message: err.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleIngest() {
+    setIsBusy(true);
+    try {
+      const res = await apiJson("/db/ingest", {
+        method: "POST",
+        body: JSON.stringify({ ...connConfig(), row_limit: Number(rowLimit) || null }),
+      });
+      onIngested(res);
+      setToast(
+        res.truncated
+          ? `Imported the first ${res.row_count.toLocaleString()} row(s) from ${provider}:${table} (row limit reached -- raise it to pull more).`
+          : `Imported ${res.row_count.toLocaleString()} row(s) from ${provider}:${table}.`
+      );
+      setOpen(false);
+    } catch (err) {
+      setToast(`Database import failed: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="text-xs mt-2" style={{ textDecoration: "underline", color: "var(--text-muted)" }}>
+        Or import a table from Postgres / ClickHouse
+      </button>
+    );
+  }
+
+  return (
+    <div className="surf2 border b rounded-lg p-3 mt-2 flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold muted uppercase tracking-wide">Import from database</span>
+        <button onClick={() => setOpen(false)} className="text-xs muted">&times;</button>
+      </div>
+      <div className="flex gap-2">
+        <select value={provider} onChange={(e) => setProvider(e.target.value)} className="surf border b rounded-md text-xs px-2 py-1.5 flex-1">
+          <option value="postgresql">PostgreSQL</option>
+          <option value="clickhouse">ClickHouse</option>
+        </select>
+        <label className="flex items-center gap-1.5 text-xs muted whitespace-nowrap">
+          <input type="checkbox" checked={ssl} onChange={(e) => setSsl(e.target.checked)} /> SSL
+        </label>
+      </div>
+      <div className="flex gap-2">
+        <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="host" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
+        <input value={port} onChange={(e) => setPort(e.target.value)} placeholder="port" className="surf border b rounded-md text-xs px-2 py-1.5" style={{ width: "72px" }} />
+      </div>
+      <input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="database" className="surf border b rounded-md text-xs px-2 py-1.5" />
+      <div className="flex gap-2">
+        <input value={schemaField} onChange={(e) => setSchemaField(e.target.value)} placeholder="schema (optional)" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
+        <input value={table} onChange={(e) => setTable(e.target.value)} placeholder="table" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
+      </div>
+      <div className="flex gap-2">
+        <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" autoComplete="off" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
+        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" type="password" autoComplete="off" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
+      </div>
+      <label className="flex items-center gap-1.5 text-xs muted">
+        Row limit
+        <input value={rowLimit} onChange={(e) => setRowLimit(e.target.value)} type="number" className="surf border b rounded-md text-xs px-2 py-1 flex-1" />
+      </label>
+      {testResult && (
+        <div
+          className="text-xs px-2 py-1.5 rounded-md"
+          style={{ background: testResult.ok ? "var(--success-soft)" : "var(--danger-soft)", color: testResult.ok ? "var(--success)" : "var(--danger)" }}
+        >
+          {testResult.message}
+        </div>
+      )}
+      <div className="flex gap-2 mt-1">
+        <button onClick={handleTest} disabled={isBusy || !host || !database} className="btn btn-ghost text-xs font-medium px-2.5 py-1.5 flex-1">Test connection</button>
+        <button onClick={handleIngest} disabled={isBusy || !host || !database || !table} className="btn btn-primary text-xs font-medium px-2.5 py-1.5 flex-1">
+          {isBusy ? "Importing..." : "Import table"}
+        </button>
+      </div>
+      <div className="text-xs muted">
+        Runs through the backend's own database drivers (psycopg2 / clickhouse-connect must be installed there --
+        see <code>/api/connectors/capabilities</code>). Credentials are sent once for this request and are never
+        stored or logged by ReLink.
+      </div>
+    </div>
+  );
+}
+
 function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, matchColumn, setMatchColumn, hierarchy, setHierarchy, setToast }) {
   const [isParsing, setIsParsing] = useState(false);
   const [pendingName, setPendingName] = useState("");
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragDepth = useRef(0);
 
-  function handleUpload(e) {
-    const f = e.target.files[0];
+  function processFile(f) {
     if (!f) return;
     setIsParsing(true);
     setPendingName(f.name);
@@ -541,6 +841,50 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
     );
   }
 
+  function handleUpload(e) {
+    processFile(e.target.files[0]);
+    e.target.value = "";
+  }
+
+  const ACCEPTED_EXT = [".csv", ".xlsx", ".xls", ".geojson", ".json"];
+  function isAcceptedFile(f) {
+    const name = (f.name || "").toLowerCase();
+    return ACCEPTED_EXT.some((ext) => name.endsWith(ext));
+  }
+
+  function handleDragEnter(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth.current += 1;
+    if (!isParsing) setIsDragOver(true);
+  }
+  function handleDragOver(e) {
+    // Required for onDrop to fire at all -- browsers reject drops on
+    // elements that don't cancel dragover.
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  function handleDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setIsDragOver(false);
+  }
+  function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth.current = 0;
+    setIsDragOver(false);
+    if (isParsing) return;
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    if (!isAcceptedFile(f)) {
+      setToast(`${f.name} isn't one of the accepted types (.csv, .xlsx, .xls, .geojson, .json).`);
+      return;
+    }
+    processFile(f);
+  }
+
   const idEqualsMatch = idColumn && matchColumn && idColumn === matchColumn;
   const hierarchyHasMatch = matchColumn && hierarchy.includes(matchColumn);
 
@@ -557,7 +901,19 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
         </div>
       )}
 
-      <div className="surf2 border b rounded-lg px-3 py-6 flex flex-col items-center justify-center mb-4">
+      <div
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className="surf2 border b rounded-lg px-3 py-6 flex flex-col items-center justify-center mb-4"
+        style={{
+          borderStyle: isDragOver ? "dashed" : "solid",
+          borderColor: isDragOver ? "var(--primary)" : undefined,
+          background: isDragOver ? "var(--primary-soft)" : undefined,
+          transition: "background-color .1s ease, border-color .1s ease",
+        }}
+      >
         {isParsing ? (
           <>
             <Spinner />
@@ -568,6 +924,7 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
           <>
             <div className="text-sm font-medium">{file.name}</div>
             <div className="text-xs muted mt-1">{file.rowCount.toLocaleString()} rows detected</div>
+            <div className="text-xs muted mt-1">{isDragOver ? "Drop to upload" : "Drag a file here, or"}</div>
           </>
         )}
         <label className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-3" style={isParsing ? { opacity: 0.5, pointerEvents: "none" } : {}}>
@@ -575,6 +932,16 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
           <input type="file" accept=".csv,.xlsx,.xls,.geojson,.json" onChange={handleUpload} className="hidden" disabled={isParsing} />
         </label>
       </div>
+
+      <DbImportPanel
+        setToast={setToast}
+        onIngested={(res) => {
+          setFile({ name: res.filename, format: res.format, rowCount: res.row_count, columns: res.columns, geometry: null, geometryRows: null, fileId: res.file_id, uploadError: null });
+          setIdColumn(res.columns[0] || "");
+          setMatchColumn(res.columns[1] || res.columns[0] || "");
+          setHierarchy([]);
+        }}
+      />
 
       <div className="flex flex-col gap-3">
         <label className="flex flex-col gap-1.5">
@@ -1174,23 +1541,19 @@ function bestCandidate(row, keys) {
 }
 
 /* ---------------------------------------------------------------------- */
-/* Tab 4: Review & finalize                                              */
-/* Previously two tabs ("Review queue" and "Approve & finalize") that did */
-/* largely the same job through two different mechanisms -- one row      */
-/* immediately writes to the backend as you decide it, the other staged  */
-/* a second round of approve/reject on whatever was left. Folded into    */
-/* one tab: every decision (choosing a method, or rejecting) writes      */
-/* immediately and is tracked as "decided"; "Merge and finalize" is just */
-/* the final lock-in step once nothing is left undecided. The summary,   */
-/* bulk actions, and merge button live in a footer that's always in      */
-/* view (sticky), not something you scroll down the sidebar to find.     */
+/* Tab 4: Review queue                                                    */
+/* Job: INVESTIGATE. One row at a time, with everything needed to make a  */
+/* judgment call on it -- method-by-method comparison, spatial preview,   */
+/* audit notes, manual/geocode override. This is where you pick a method  */
+/* for a specific row. It never merges or bulk-decides; that's Approve &  */
+/* finalize's job, one tab over -- Review queue is for the reasoning,     */
+/* Approve & finalize is for the sign-off.                                */
 /* ---------------------------------------------------------------------- */
 
-function TabReviewAndFinalize(props) {
+function TabReviewQueue(props) {
   const {
     rows, selectedId, setSelectedId, note, setNote, setToast, sourceGeometry, sourceGeometryRows, sourceIdCol,
-    patchReviewRow, bulkReview, undoReview, geocodeLookup,
-    pendingDecisions, setPendingDecisions, merged, setMerged, finalRows,
+    patchReviewRow, geocodeLookup, pendingDecisions, merged, setActiveTab,
   } = props;
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -1199,13 +1562,7 @@ function TabReviewAndFinalize(props) {
   const candidateKeys = enabledMethodKeys(props, { candidatesOnly: true });
   const selected = rows.find((r) => r.sourceId === selectedId) || rows[0];
 
-  // A row counts as "decided" once it's approved (auto or by picking a
-  // method) or has been explicitly rejected. Rejecting doesn't change
-  // `approved` (it was already false), so that decision is tracked
-  // locally in pendingDecisions -- the same map used for the merge gate.
   const isDecided = (r) => r.approved || pendingDecisions[r.sourceId] === "rejected";
-  const undecidedCount = rows.filter((r) => !isDecided(r)).length;
-  const decidedCount = rows.length - undecidedCount;
 
   const counts = useMemo(() => ({
     all: rows.length,
@@ -1235,72 +1592,12 @@ function TabReviewAndFinalize(props) {
 
   function chooseMethod(methodKey) {
     patchReviewRow(selected.sourceId, { chosen_method: methodKey, approved: true });
-    setPendingDecisions((prev) => ({ ...prev, [selected.sourceId]: "approved" }));
     setToast(`Row ${selected.sourceId}: ${METHOD_META[methodKey]?.label || methodKey} selected as final match.`);
   }
 
   function rejectRow() {
     patchReviewRow(selected.sourceId, { approved: false, chosen_method: null });
-    setPendingDecisions((prev) => ({ ...prev, [selected.sourceId]: "rejected" }));
     setToast(`Row ${selected.sourceId} rejected. Will be written as unmatched.`);
-  }
-
-  async function approveAllConsensus() {
-    const targets = rows.filter((r) => {
-      const candidates = Object.values(r.methods).filter((m) => m.targetId !== null);
-      const uniqueTargets = new Set(candidates.map((m) => m.targetId));
-      return candidates.length >= 2 && uniqueTargets.size === 1 && r.kind !== "collision" && !r.approved;
-    });
-    if (targets.length === 0) { setToast("No unapproved consensus rows to approve."); return; }
-    const undoToken = await bulkReview("approve", targets.map((r) => r.sourceId));
-    setPendingDecisions((prev) => {
-      const next = { ...prev };
-      targets.forEach((r) => { next[r.sourceId] = "approved"; });
-      return next;
-    });
-    setToast({
-      message: `Approved ${targets.length} row(s) with full method consensus.`,
-      undo: undoToken ? () => { undoReview(undoToken); setToast("Undone."); } : undefined,
-    });
-  }
-
-  async function rejectBelowThreshold() {
-    const targets = rows.filter((r) => r.approved && Object.values(r.methods).some((m) => m.score !== null && m.score < 0.8));
-    if (targets.length === 0) { setToast("No approved rows below 0.80 to reject."); return; }
-    const undoToken = await bulkReview("reject", targets.map((r) => r.sourceId));
-    setPendingDecisions((prev) => {
-      const next = { ...prev };
-      targets.forEach((r) => { next[r.sourceId] = "rejected"; });
-      return next;
-    });
-    setToast({
-      message: `Rejected ${targets.length} approved row(s) that had a method score below 0.80.`,
-      undo: undoToken ? () => { undoReview(undoToken); setToast("Undone."); } : undefined,
-    });
-  }
-
-  function approveAllRemaining() {
-    const targets = rows.filter((r) => !isDecided(r));
-    if (targets.length === 0) { setToast("Nothing left undecided."); return; }
-    targets.forEach((r) => {
-      const best = bestCandidate(r, candidateKeys);
-      if (best.key) patchReviewRow(r.sourceId, { chosen_method: best.key, approved: true });
-    });
-    setPendingDecisions((prev) => {
-      const next = { ...prev };
-      targets.forEach((r) => { next[r.sourceId] = "approved"; });
-      return next;
-    });
-    setToast(`Approved ${targets.length} remaining row(s) using each row's best available candidate.`);
-  }
-
-  async function mergeAndFinalize() {
-    if (undecidedCount > 0) {
-      setToast(`${undecidedCount} row(s) still undecided. Approve, reject, or use "Approve all remaining" first.`);
-      return;
-    }
-    setMerged(true);
-    setToast("Merged. Final answer ready.");
   }
 
   function goToNextUnreviewed() {
@@ -1327,10 +1624,6 @@ function TabReviewAndFinalize(props) {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  // Map source_id -> geometry index using the actual ID column values, not
-  // the feature's raw position in the file. The two only coincide when the
-  // ID column happens to be sequential and 0-based, which isn't a safe
-  // assumption for real IDs (facility codes, non-sequential numbers, etc).
   const geometryIndexBySourceId = useMemo(() => {
     if (!sourceGeometryRows || !sourceIdCol) return null;
     const map = {};
@@ -1346,41 +1639,6 @@ function TabReviewAndFinalize(props) {
     const idx = geometryIndexBySourceId ? geometryIndexBySourceId[String(selected.sourceId)] : undefined;
     return idx !== undefined ? sourceGeometry[idx] || null : null;
   }, [selected, sourceGeometry, geometryIndexBySourceId]);
-
-  if (merged) {
-    return (
-      <div className="p-5 max-w-4xl mx-auto">
-        <div className="card surf border p-5">
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-sm font-semibold">Final linked answer</div>
-            <div className="text-xs muted">Use the Export &amp; audit tab for the authoritative CSV.</div>
-          </div>
-          <div className="text-xs muted mb-4">{finalRows.length} rows. Clean and process-free: just the source and its final match.</div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b b">
-                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Source ID</th>
-                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Source name</th>
-                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Linked target</th>
-                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Target ID</th>
-              </tr>
-            </thead>
-            <tbody>
-              {finalRows.map((r) => (
-                <tr key={r.sourceId} className="border-b b">
-                  <td className="py-2.5 font-mono text-xs muted">{r.sourceId}</td>
-                  <td className="py-2.5 font-medium">{r.sourceName}</td>
-                  <td className="py-2.5">{r.target}</td>
-                  <td className="py-2.5 font-mono text-xs muted">{r.targetId}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <button onClick={() => setMerged(false)} className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-4">&larr; Unmerge and keep editing</button>
-        </div>
-      </div>
-    );
-  }
 
   if (!rows.length || !selected) {
     return (
@@ -1398,16 +1656,24 @@ function TabReviewAndFinalize(props) {
 
   return (
     <div className="flex flex-col" style={{ height: "100%" }}>
+      {merged && (
+        <div className="px-5 pt-4">
+          <div className="card surf2 border p-3 text-xs muted flex items-center justify-between">
+            <span>These decisions are already merged. Go to Approve &amp; finalize to unmerge and keep editing.</span>
+            <button onClick={() => setActiveTab(4)} className="btn btn-ghost text-xs font-medium px-3 py-1">Go to Approve &amp; finalize &rarr;</button>
+          </div>
+        </div>
+      )}
       <div className="rls-grid-review" style={{ flex: 1, minHeight: 0 }}>
         <div className="surf border-r flex flex-col">
           <div className="p-3 border-b b">
             <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter rows..." className="w-full surf2 border b rounded-md text-sm px-3 py-2" style={{ color: "var(--text)" }} />
           </div>
-          <div className="flex flex-col gap-1 p-2 border-b b">
+          <div className="flex flex-wrap gap-1.5 p-2 border-b b">
             {FILTERS.map((f) => (
-              <button key={f.key} onClick={() => setFilter(f.key)} className="btn flex items-center justify-between text-sm px-3 py-2" style={filter === f.key ? { background: "var(--primary-soft)", color: "var(--primary)" } : { color: "var(--text)" }}>
+              <button key={f.key} onClick={() => setFilter(f.key)} className="btn text-xs font-medium px-2.5 py-1 flex items-center gap-1" style={filter === f.key ? { background: "var(--primary-soft)", color: "var(--primary)" } : { color: "var(--text)" }}>
                 <span>{f.label}</span>
-                <span className="text-xs muted">{counts[f.key]}</span>
+                <span className="muted">{counts[f.key]}</span>
               </button>
             ))}
           </div>
@@ -1519,8 +1785,301 @@ function TabReviewAndFinalize(props) {
         </div>
       </div>
 
-      {/* Always-visible footer: summary, bulk actions, and merge. No more
-          scrolling the sidebar to find these. */}
+      {/* Slim status strip -- no bulk actions and no merge button here.
+          Those are Approve & finalize's job; this tab only hands you off. */}
+      <div className="surf border-t b flex items-center justify-between gap-4 px-5 py-2.5" style={{ flexShrink: 0 }}>
+        <div className="text-xs muted">
+          <span className="font-semibold" style={{ color: "var(--text)" }}>{rows.filter(isDecided).length}</span> / {rows.length} decided in this project
+        </div>
+        <button onClick={() => setActiveTab(4)} className="btn btn-ghost text-xs font-medium px-3 py-1.5">
+          Go to Approve &amp; finalize &rarr;
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Tab 5: Approve & finalize                                              */
+/* Job: SIGN OFF. A flat, fast checklist across every row -- not just the */
+/* problem cases -- with a big Approve/Reject per row and a live "final   */
+/* answer preview" that grows as you decide, so you can see exactly what  */
+/* you're about to lock in before you lock it in. This is the tab's real  */
+/* reason to exist alongside Review queue: Review queue lets you compare  */
+/* methods on one row; this tab lets you watch the actual output dataset  */
+/* take shape in real time and sign off on it. Bulk shortcuts and "Merge  */
+/* and finalize" live here, not in Review queue.                          */
+/* ---------------------------------------------------------------------- */
+
+function TabApproveFinalize(props) {
+  const {
+    rows, setToast, patchReviewRow, bulkReview, undoReview,
+    pendingDecisions, setPendingDecisions, merged, setMerged, finalRows, setActiveTab,
+  } = props;
+  const [statusFilter, setStatusFilter] = useState("undecided");
+  // A row that just got decided is held in view briefly so its green/red
+  // flash is actually visible, then flagged "exiting" to play the quick
+  // collapse animation, then dropped -- at which point the normal filter
+  // takes over and it's simply gone. holdIds keeps it in the list past
+  // the filter; exitingIds triggers the CSS collapse on that held row.
+  const [holdIds, setHoldIds] = useState({});
+  const [exitingIds, setExitingIds] = useState(() => new Set());
+  const timersRef = useRef([]);
+  useEffect(() => () => timersRef.current.forEach(clearTimeout), []);
+
+  const candidateKeys = enabledMethodKeys(props, { candidatesOnly: true });
+  const isDecided = (r) => r.approved || pendingDecisions[r.sourceId] === "rejected";
+  const isRejected = (r) => !r.approved && pendingDecisions[r.sourceId] === "rejected";
+
+  const undecidedCount = rows.filter((r) => !isDecided(r)).length;
+  const decidedCount = rows.length - undecidedCount;
+  const approvedRows = rows.filter((r) => r.approved);
+
+  const statusCounts = useMemo(() => ({
+    undecided: rows.filter((r) => !isDecided(r)).length,
+    approved: rows.filter((r) => r.approved).length,
+    rejected: rows.filter(isRejected).length,
+    all: rows.length,
+  }), [rows, pendingDecisions]);
+
+  const visibleRows = useMemo(() => rows.filter((r) => {
+    if (holdIds[r.sourceId]) return true;
+    if (statusFilter === "undecided") return !isDecided(r);
+    if (statusFilter === "approved") return r.approved;
+    if (statusFilter === "rejected") return isRejected(r);
+    return true;
+  }), [rows, statusFilter, pendingDecisions, holdIds]);
+
+  // Flash the row's new color, hold it in place just long enough to
+  // register, then play a fast collapse -- but only when the decision
+  // would actually pull it out of the current filter view. In "All",
+  // or when the decision matches the filter already showing, the row
+  // just stays put with its new color and nothing needs to animate out.
+  function animateOut(sourceId, decision) {
+    const leavesView = !(statusFilter === "all" || statusFilter === decision);
+    if (!leavesView) return;
+    setHoldIds((prev) => ({ ...prev, [sourceId]: true }));
+    const t1 = setTimeout(() => {
+      setExitingIds((prev) => new Set(prev).add(sourceId));
+    }, 130);
+    const t2 = setTimeout(() => {
+      setHoldIds((prev) => { const next = { ...prev }; delete next[sourceId]; return next; });
+      setExitingIds((prev) => { const next = new Set(prev); next.delete(sourceId); return next; });
+    }, 130 + 140);
+    timersRef.current.push(t1, t2);
+  }
+
+  function approveRow(r) {
+    const best = bestCandidate(r, candidateKeys);
+    patchReviewRow(r.sourceId, { chosen_method: r.chosenMethod || best.key, approved: true });
+    setPendingDecisions((prev) => ({ ...prev, [r.sourceId]: "approved" }));
+    animateOut(r.sourceId, "approved");
+  }
+
+  function rejectRow(r) {
+    patchReviewRow(r.sourceId, { approved: false, chosen_method: null });
+    setPendingDecisions((prev) => ({ ...prev, [r.sourceId]: "rejected" }));
+    animateOut(r.sourceId, "rejected");
+  }
+
+  async function approveAllConsensus() {
+    const targets = rows.filter((r) => {
+      const candidates = Object.values(r.methods).filter((m) => m.targetId !== null);
+      const uniqueTargets = new Set(candidates.map((m) => m.targetId));
+      return candidates.length >= 2 && uniqueTargets.size === 1 && r.kind !== "collision" && !r.approved;
+    });
+    if (targets.length === 0) { setToast("No unapproved consensus rows to approve."); return; }
+    const undoToken = await bulkReview("approve", targets.map((r) => r.sourceId));
+    setPendingDecisions((prev) => {
+      const next = { ...prev };
+      targets.forEach((r) => { next[r.sourceId] = "approved"; });
+      return next;
+    });
+    setToast({
+      message: `Approved ${targets.length} row(s) with full method consensus.`,
+      undo: undoToken ? () => { undoReview(undoToken); setToast("Undone."); } : undefined,
+    });
+  }
+
+  async function rejectBelowThreshold() {
+    const targets = rows.filter((r) => r.approved && Object.values(r.methods).some((m) => m.score !== null && m.score < 0.8));
+    if (targets.length === 0) { setToast("No approved rows below 0.80 to reject."); return; }
+    const undoToken = await bulkReview("reject", targets.map((r) => r.sourceId));
+    setPendingDecisions((prev) => {
+      const next = { ...prev };
+      targets.forEach((r) => { next[r.sourceId] = "rejected"; });
+      return next;
+    });
+    setToast({
+      message: `Rejected ${targets.length} approved row(s) that had a method score below 0.80.`,
+      undo: undoToken ? () => { undoReview(undoToken); setToast("Undone."); } : undefined,
+    });
+  }
+
+  function approveAllRemaining() {
+    const targets = rows.filter((r) => !isDecided(r));
+    if (targets.length === 0) { setToast("Nothing left undecided."); return; }
+    targets.forEach((r) => {
+      const best = bestCandidate(r, candidateKeys);
+      if (best.key) patchReviewRow(r.sourceId, { chosen_method: best.key, approved: true });
+    });
+    setPendingDecisions((prev) => {
+      const next = { ...prev };
+      targets.forEach((r) => { next[r.sourceId] = "approved"; });
+      return next;
+    });
+    setToast(`Approved ${targets.length} remaining row(s) using each row's best available candidate.`);
+  }
+
+  async function mergeAndFinalize() {
+    if (undecidedCount > 0) {
+      setToast(`${undecidedCount} row(s) still undecided. Approve, reject, or use "Approve all remaining" first.`);
+      return;
+    }
+    setMerged(true);
+    setToast("Merged. Final answer ready.");
+  }
+
+  if (merged) {
+    return (
+      <div className="p-5 max-w-4xl mx-auto">
+        <div className="card surf border p-5">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-sm font-semibold">Final linked answer</div>
+            <div className="text-xs muted">Use the Export &amp; audit tab for the authoritative CSV.</div>
+          </div>
+          <div className="text-xs muted mb-4">{finalRows.length} rows. Clean and process-free: just the source and its final match.</div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b b">
+                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Source ID</th>
+                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Source name</th>
+                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Linked target</th>
+                <th className="pb-2 muted text-xs uppercase tracking-wide text-left">Target ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {finalRows.map((r) => (
+                <tr key={r.sourceId} className="border-b b">
+                  <td className="py-2.5 font-mono text-xs muted">{r.sourceId}</td>
+                  <td className="py-2.5 font-medium">{r.sourceName}</td>
+                  <td className="py-2.5">{r.target}</td>
+                  <td className="py-2.5 font-mono text-xs muted">{r.targetId}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex items-center gap-2 mt-4">
+            <button onClick={() => setMerged(false)} className="btn btn-ghost text-xs font-medium px-3 py-1.5">&larr; Unmerge and keep editing</button>
+            <button onClick={() => setActiveTab(5)} className="btn btn-ghost text-xs font-medium px-3 py-1.5">Continue to export &amp; audit &rarr;</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!rows.length) {
+    return (
+      <div className="p-5 max-w-2xl mx-auto">
+        <div className="card surf border p-6 text-center">
+          <div className="text-sm font-semibold mb-1.5">Nothing to approve yet</div>
+          <div className="text-sm muted">Run the pipeline and, optionally, investigate rows in Review queue first. Every row -- decided or not -- shows up here.</div>
+        </div>
+      </div>
+    );
+  }
+
+  const STATUS_FILTERS = [
+    { key: "undecided", label: "Undecided" },
+    { key: "approved", label: "Approved" },
+    { key: "rejected", label: "Rejected" },
+    { key: "all", label: "All" },
+  ];
+
+  return (
+    <div className="flex flex-col" style={{ height: "100%" }}>
+      <div className="flex items-center justify-between px-5 py-3 border-b b">
+        <div>
+          <div className="text-sm font-semibold">Pending approvals</div>
+          <div className="text-xs muted">{undecidedCount} undecided, {statusCounts.approved} approved, {statusCounts.rejected} rejected</div>
+        </div>
+        <div className="flex items-center gap-2">
+          {STATUS_FILTERS.map((f) => (
+            <button key={f.key} onClick={() => setStatusFilter(f.key)} className="btn text-xs font-medium px-2.5 py-1.5" style={statusFilter === f.key ? { background: "var(--primary-soft)", color: "var(--primary)" } : { color: "var(--text)" }}>
+              {f.label} <span className="muted">{statusCounts[f.key]}</span>
+            </button>
+          ))}
+          {undecidedCount > 0 && (
+            <button onClick={approveAllRemaining} className="btn btn-primary text-xs font-medium px-3 py-1.5">Approve all remaining</button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 340px" }}>
+        <div className="overflow-y-auto p-5 flex flex-col gap-3" style={{ maxWidth: "920px" }}>
+          {visibleRows.map((r) => {
+            const decided = isDecided(r);
+            const rejected = isRejected(r);
+            const best = bestCandidate(r, candidateKeys);
+            const borderStyle = r.approved
+              ? { borderColor: "var(--success-border)", background: "var(--success-soft)" }
+              : rejected
+              ? { borderColor: "var(--danger-border)", background: "var(--danger-soft)" }
+              : { borderColor: "var(--border)" };
+            const isExiting = exitingIds.has(r.sourceId);
+            return (
+              <div
+                key={r.sourceId}
+                className={"card border p-4 flex items-center justify-between gap-5" + (isExiting ? " rowExiting" : "")}
+                style={{ ...borderStyle, overflow: "hidden" }}
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2.5 mb-1">
+                    <span className="text-xs muted font-mono">#{r.sourceId}</span>
+                    <span className="text-base font-semibold truncate">{r.sourceName}</span>
+                    <span className="muted">&rarr;</span>
+                    <span className="text-sm truncate">{best.name || "no candidate"}</span>
+                  </div>
+                  <div className="text-xs muted flex items-center gap-1.5">
+                    <KindBadge kind={r.kind} />
+                    {best.score !== null ? `score ${(best.score * 100).toFixed(1)}%` : ""}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5 flex-shrink-0">
+                  <button onClick={() => approveRow(r)} className="btn btn-success text-sm font-medium px-4 py-2">
+                    {r.approved ? "Approved" : "Approve"}
+                  </button>
+                  <button onClick={() => rejectRow(r)} className="btn btn-danger text-sm font-medium px-4 py-2">
+                    {rejected ? "Rejected" : "Reject"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {visibleRows.length === 0 && <div className="p-4 text-sm muted">No rows in this view.</div>}
+        </div>
+
+        <div className="surf border-l overflow-y-auto p-4">
+          <div className="text-sm font-semibold mb-1">Final answer preview</div>
+          <div className="text-xs muted mb-3">Updates live as you decide. Nothing is written until you merge.</div>
+          <div className="card surf2 border p-3 mb-3">
+            <div className="text-xs muted mb-1">Rows that will be in the final answer</div>
+            <div className="text-2xl font-semibold">{approvedRows.length}</div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {approvedRows.map((r) => (
+              <div key={r.sourceId} className="flex items-center justify-between text-xs py-1 border-b b">
+                <span className="truncate">{r.sourceName}</span>
+                <span style={{ color: "var(--success)" }}>in final answer</span>
+              </div>
+            ))}
+            {approvedRows.length === 0 && <div className="text-xs muted">Nothing approved yet.</div>}
+          </div>
+        </div>
+      </div>
+
+      {/* Always-visible footer: bulk shortcuts + the actual merge/lock-in
+          step. This is the only tab that can merge. */}
       <div className="surf border-t b flex items-center justify-between gap-4 px-5 py-3" style={{ flexShrink: 0 }}>
         <div className="flex items-center gap-4 flex-wrap">
           <div className="text-xs muted">
@@ -1529,9 +2088,6 @@ function TabReviewAndFinalize(props) {
           </div>
           <button onClick={approveAllConsensus} className="btn btn-success text-xs font-medium px-3 py-1.5">Approve all in full consensus</button>
           <button onClick={rejectBelowThreshold} className="btn btn-danger text-xs font-medium px-3 py-1.5">Reject below threshold score</button>
-          {undecidedCount > 0 && (
-            <button onClick={approveAllRemaining} className="btn btn-ghost text-xs font-medium px-3 py-1.5">Approve all remaining (best candidate)</button>
-          )}
         </div>
         <button
           onClick={mergeAndFinalize}
@@ -1815,6 +2371,61 @@ export default function RelinkStudio() {
   const [projectId, setProjectId] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [auditLog, setAuditLog] = useState([]);
+
+  /* Backend connection: address, auth session, and live /health status -- */
+  /* see ConnectionStatus in the top bar. Polled periodically so switching */
+  /* the backend between --local and --lan (or a teammate's sign-in       */
+  /* expiring) shows up without a page reload.                            */
+  const [apiBaseState, setApiBaseState] = useState(getApiBase());
+  const [authToken, setAuthTokenState] = useState(getAuthToken());
+  const [authUser, setAuthUser] = useState(null);
+  const [health, setHealth] = useState(null);
+  const [healthError, setHealthError] = useState(null);
+  const [isCheckingHealth, setIsCheckingHealth] = useState(true);
+
+  function refreshHealth() {
+    setIsCheckingHealth(true);
+    checkBackendHealth()
+      .then((h) => { setHealth(h); setHealthError(null); })
+      .catch((err) => { setHealth(null); setHealthError(err.message || "Could not reach the backend."); })
+      .finally(() => setIsCheckingHealth(false));
+  }
+
+  useEffect(() => {
+    refreshHealth();
+    const id = setInterval(refreshHealth, 15000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBaseState]);
+
+  function handleApiBaseChange(newBase) {
+    const cleaned = newBase.trim().replace(/\/+$/, "");
+    if (!cleaned) return;
+    setApiBase(cleaned);
+    setApiBaseState(cleaned);
+    setToast(`Backend address updated to ${cleaned}.`);
+  }
+
+  async function handleLogin(username, password) {
+    const session = await loginToBackend(username, password);
+    setAuthToken(session.token);
+    setAuthTokenState(session.token);
+    setAuthUser(session.username);
+    setToast(`Signed in as ${session.username}.`);
+  }
+
+  function handleLogout() {
+    setAuthToken(null);
+    setAuthTokenState(null);
+    setAuthUser(null);
+    setToast("Signed out.");
+  }
+
+  const connection = {
+    apiBase: apiBaseState, onApiBaseChange: handleApiBaseChange,
+    health, healthError, isChecking: isCheckingHealth, onRefresh: refreshHealth,
+    isAuthenticated: !!authToken, authUser, onLogin: handleLogin, onLogout: handleLogout,
+  };
   const pollTimer = useRef(null);
 
   function methodStatus(score) {
@@ -2122,7 +2733,7 @@ export default function RelinkStudio() {
     navProps = { ...navProps, canContinue: filesReady, blockedReason: (sourceFile.uploadError || targetFile.uploadError) ? "Backend upload failed for one of your files, check the warning above and re-upload." : "Upload both a source and target file to continue." };
   } else if (activeTab === 1) {
     navProps = { ...navProps, canContinue: methodChosen, blockedReason: "Enable at least one matching method to continue." };
-  } else if (activeTab === 3) {
+  } else if (activeTab === 4) {
     navProps = {
       ...navProps,
       canContinue: merged,
@@ -2135,17 +2746,19 @@ export default function RelinkStudio() {
     <div data-theme={theme} className="rls" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{TOKENS_CSS}</style>
       {toast && <Toast toast={toast} onDone={() => setToast(null)} />}
-      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} />
+      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} connection={connection} />
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingBottom: "76px" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         {activeTab === 0 && <TabSourcesShape {...tabProps} />}
         {activeTab === 1 && <TabHierarchyMethods {...tabProps} />}
         {activeTab === 2 && <TabSafetyRules {...tabProps} />}
-        {activeTab === 3 && <TabReviewAndFinalize {...tabProps} />}
-        {activeTab === 4 && <TabExportAudit {...tabProps} />}
+        {activeTab === 3 && <TabReviewQueue {...tabProps} />}
+        {activeTab === 4 && <TabApproveFinalize {...tabProps} />}
+        {activeTab === 5 && <TabExportAudit {...tabProps} />}
       </div>
 
       <NavFooter {...navProps} />
     </div>
   );
 }
+

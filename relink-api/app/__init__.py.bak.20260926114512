@@ -36,9 +36,6 @@ def create_app():
     from .routes_extra import bp as api_bp_extra
     app.register_blueprint(api_bp_extra, url_prefix="/api")
 
-    from .routes_db_ingest import bp as api_bp_db_ingest
-    app.register_blueprint(api_bp_db_ingest, url_prefix="/api")
-
     @app.route("/health")
     def health():
         return jsonify({"status": "ok", "mode": cfg.mode, "auth_required": cfg.require_auth})

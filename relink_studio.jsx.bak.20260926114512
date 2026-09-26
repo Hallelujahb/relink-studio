@@ -4,60 +4,24 @@ import * as XLSX from "xlsx";
 
 /* ---------------------------------------------------------------------- */
 /* Backend wiring                                                        */
-/* Talks to the relink-api Flask backend (see ../relink-api). The base    */
-/* URL defaults to whatever host this page itself was loaded from (port   */
-/* 5000) rather than a hardcoded "localhost" -- that's what makes opening */
-/* this frontend from a teammate's machine against a --lan backend work   */
-/* without editing source. It can also be overridden from the connection  */
-/* status panel in the top bar (persisted in localStorage), for cases     */
-/* where the frontend and backend aren't on the same host.                */
+/* Talks to the relink-api Flask backend (see ../relink-api). Change      */
+/* API_BASE if you run the backend on a different host/port.             */
 /* ---------------------------------------------------------------------- */
 
-function defaultApiBase() {
-  if (typeof window !== "undefined" && window.location && window.location.hostname) {
-    return `http://${window.location.hostname}:5000/api`;
-  }
-  return "http://localhost:5000/api";
-}
+const API_BASE = "http://localhost:5000/api";
 
-const _conn = {
-  base: (typeof localStorage !== "undefined" && localStorage.getItem("relink_api_base")) || defaultApiBase(),
-  token: (typeof localStorage !== "undefined" && localStorage.getItem("relink_auth_token")) || null,
-};
-
-function getApiBase() { return _conn.base; }
-function setApiBase(base) {
-  _conn.base = base;
-  try { localStorage.setItem("relink_api_base", base); } catch { /* private browsing, etc. */ }
-}
-function getAuthToken() { return _conn.token; }
-function setAuthToken(token) {
-  _conn.token = token;
-  try {
-    if (token) localStorage.setItem("relink_auth_token", token);
-    else localStorage.removeItem("relink_auth_token");
-  } catch { /* private browsing, etc. */ }
-}
-
-class ApiError extends Error {
-  constructor(message, status) {
-    super(message);
-    this.status = status;
-  }
-}
+class ApiError extends Error {}
 
 async function apiFetch(path, options = {}) {
   let res;
-  const headers = {};
-  if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
-  if (_conn.token) headers["Authorization"] = `Bearer ${_conn.token}`;
   try {
-    res = await fetch(`${_conn.base}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } });
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : undefined,
+      ...options,
+    });
   } catch (e) {
     throw new ApiError(
-      `Could not reach the backend at ${_conn.base}${path}. Is relink-api running, and is this address reachable ` +
-      `from your machine? Check the connection status in the top bar -- in LAN mode the backend's CORS ` +
-      `origins also need to include this frontend's address (RELINK_CORS_ORIGINS).`
+      `Could not reach the backend at ${API_BASE}${path}. Is relink-api running (python run.py)?`
     );
   }
   if (!res.ok) {
@@ -66,11 +30,7 @@ async function apiFetch(path, options = {}) {
       const body = await res.json();
       if (body && body.error) message = body.error;
     } catch { /* non-JSON error body, keep default message */ }
-    if (res.status === 401) {
-      setAuthToken(null);
-      message = "Authentication required (or your session expired). Sign in from the connection status panel in the top bar.";
-    }
-    throw new ApiError(message, res.status);
+    throw new ApiError(message);
   }
   return res;
 }
@@ -86,39 +46,11 @@ async function uploadFileToBackend(file) {
   return apiJson("/upload", { method: "POST", body: form });
 }
 
-/* GET /health is always unauthenticated by design (see relink-api), so   */
-/* this never needs a token -- it's what powers the connection-status     */
-/* pill: which mode the backend is running in, and whether it requires    */
-/* sign-in at all.                                                       */
-async function checkBackendHealth() {
-  const root = _conn.base.replace(/\/api\/?$/, "");
-  let res;
-  try {
-    res = await fetch(`${root}/health`);
-  } catch (e) {
-    throw new Error(`Could not reach ${root}/health.`);
-  }
-  if (!res.ok) throw new Error(`Health check failed (${res.status}).`);
-  return res.json(); // { status, mode: "local"|"lan", auth_required: bool }
-}
-
-async function loginToBackend(username, password) {
-  return apiJson("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
-}
-
 /* ---------------------------------------------------------------------- */
 /* Shared tokens and primitives                                          */
 /* ---------------------------------------------------------------------- */
 
 const TOKENS_CSS = `
-  /* The whole app is one fixed-height flex column with its own internal
-     scroll regions (TopBar, the active tab's content, NavFooter). If the
-     surrounding page is ever allowed to scroll too -- which happens the
-     moment html/body have their default margin and auto height -- you get
-     two scrollbars fighting each other and the top bar visibly drifts.
-     Locking the page itself down here means it can't happen regardless of
-     what (if anything) the host page's own stylesheet does. */
-  html, body, #root { height: 100%; margin: 0; overflow: hidden; }
   .rls[data-theme="dark"] {
     --bg: #0D0F13; --surface: #15181E; --surface-2: #1B1F27; --surface-hover: #232833;
     --border: #262B35; --border-strong: #333A47;
@@ -318,103 +250,9 @@ function ThresholdSlider({ label, value, setValue, accent }) {
 
 const TAB_LABELS = ["Sources & shape", "Hierarchy & methods", "Safety & rules", "Review queue", "Approve & finalize", "Export & audit"];
 
-function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChecking, onRefresh, isAuthenticated, authUser, onLogin, onLogout }) {
-  const [open, setOpen] = useState(false);
-  const [editBase, setEditBase] = useState(apiBase);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState(null);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-
-  useEffect(() => { setEditBase(apiBase); }, [apiBase]);
-
-  const needsSignIn = !!(health && health.auth_required && !isAuthenticated);
-  let dotColor = "var(--text-muted)";
-  let label = "Checking connection...";
-  if (!isChecking) {
-    if (healthError) {
-      dotColor = "var(--danger)";
-      label = "Backend unreachable";
-    } else if (health) {
-      if (health.mode === "lan") {
-        dotColor = needsSignIn ? "var(--warning)" : "var(--success)";
-        label = needsSignIn ? "LAN mode \u00b7 sign-in required" : health.auth_required ? `LAN mode \u00b7 ${authUser || "signed in"}` : "LAN mode \u00b7 auth off";
-      } else {
-        dotColor = "var(--success)";
-        label = "Local only";
-      }
-    }
-  }
-
-  async function handleLogin(e) {
-    e.preventDefault();
-    setIsLoggingIn(true);
-    setLoginError(null);
-    try {
-      await onLogin(username, password);
-      setPassword("");
-    } catch (err) {
-      setLoginError(err.message);
-    } finally {
-      setIsLoggingIn(false);
-    }
-  }
-
+function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged }) {
   return (
-    <div style={{ position: "relative" }}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex items-center gap-1.5"
-        title="Backend connection status"
-      >
-        <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />
-        {label}
-      </button>
-      {open && (
-        <div className="card surf border p-3" style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, width: "300px", zIndex: 60 }}>
-          <div className="text-xs font-semibold muted uppercase tracking-wide mb-2">Backend connection</div>
-
-          <label className="flex flex-col gap-1 mb-2">
-            <span className="text-xs muted">Backend URL</span>
-            <input value={editBase} onChange={(e) => setEditBase(e.target.value)} className="surf2 border b rounded-md text-xs px-2 py-1.5" />
-          </label>
-          <div className="flex gap-2 mb-2">
-            <button onClick={() => onApiBaseChange(editBase)} className="btn btn-ghost text-xs font-medium px-2.5 py-1 flex-1">Save &amp; reconnect</button>
-            <button onClick={onRefresh} className="btn btn-ghost text-xs font-medium px-2.5 py-1">Re-check</button>
-          </div>
-
-          {healthError && (
-            <div className="text-xs px-2 py-1.5 rounded-md mb-2" style={{ background: "var(--danger-soft)", color: "var(--danger)" }}>{healthError}</div>
-          )}
-          {health && (
-            <div className="text-xs muted mb-2">
-              Mode: <b>{health.mode}</b> &middot; Auth required: <b>{health.auth_required ? "yes" : "no"}</b>
-              {health.mode === "lan" && (
-                <div className="mt-1">Reachable from other devices on this private network. Never forward this port to the public internet.</div>
-              )}
-            </div>
-          )}
-
-          {needsSignIn && (
-            <form onSubmit={handleLogin} className="flex flex-col gap-1.5 mt-1">
-              <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" autoComplete="username" className="surf2 border b rounded-md text-xs px-2 py-1.5" />
-              <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" type="password" autoComplete="current-password" className="surf2 border b rounded-md text-xs px-2 py-1.5" />
-              {loginError && <div className="text-xs" style={{ color: "var(--danger)" }}>{loginError}</div>}
-              <button type="submit" disabled={isLoggingIn} className="btn btn-primary text-xs font-medium px-2.5 py-1.5">{isLoggingIn ? "Signing in..." : "Sign in"}</button>
-            </form>
-          )}
-          {isAuthenticated && health?.auth_required && (
-            <button onClick={onLogout} className="btn btn-ghost text-xs font-medium px-2.5 py-1 w-full">Sign out{authUser ? ` (${authUser})` : ""}</button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged, connection }) {
-  return (
-    <div style={{ position: "sticky", top: 0, zIndex: 30, flexShrink: 0 }}>
+    <>
       <div className="surf border-b flex items-center justify-between px-5 py-3">
         <div className="flex items-center gap-3">
           <Logo />
@@ -422,16 +260,10 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
           <span className="text-xs muted surf2 border b px-2 py-1 rounded-md">{sourceFile.name} &harr; {targetFile.name}</span>
         </div>
         <div className="flex items-center gap-3">
-          <span
-            className="text-xs muted flex items-center gap-1.5"
-            title={connection.health?.mode === "lan"
-              ? "The backend is bound to this network (--lan mode) so teammates can reach it. Nothing goes to the internet or a third party."
-              : "The backend only accepts connections from this machine. Nothing is uploaded anywhere."}
-          >
+          <span className="text-xs muted flex items-center gap-1.5" title="Your files are read and processed in this browser only. Nothing is uploaded anywhere.">
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--success)" }} />
-            {connection.health?.mode === "lan" ? "Running on your private network \u2014 no cloud, no internet" : "Runs locally, data never leaves this machine"}
+            Runs locally, data never leaves this machine
           </span>
-          <ConnectionStatus {...connection} />
           <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="btn btn-ghost text-xs font-medium px-3 py-1.5">
             {theme === "dark" ? "Light mode" : "Dark mode"}
           </button>
@@ -480,7 +312,7 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
           );
         })}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -489,30 +321,26 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
   const isLast = activeTab === TAB_LABELS.length - 1;
   if (isFirst && isLast) return null;
 
-  // A docked, full-width bar flush against the bottom edge -- not a pair
-  // of pill buttons floating with gaps around them. It sits outside the
-  // scrollable tab content (see the root layout below) so it never moves.
   return (
-    <div
-      className="surf border-t b flex items-center justify-between px-5 py-3"
-      style={{ flexShrink: 0, position: "sticky", bottom: 0, zIndex: 30 }}
-    >
-      <div>
-        {!isFirst && (
-          <button onClick={() => setActiveTab(activeTab - 1)} className="btn btn-ghost text-sm font-medium px-4 py-2">
-            &larr; Back
-          </button>
-        )}
-      </div>
+    <>
+      {!isFirst && (
+        <button
+          onClick={() => setActiveTab(activeTab - 1)}
+          className="btn btn-ghost card text-sm font-medium px-4 py-2.5 border"
+          style={{ position: "fixed", left: "20px", bottom: "20px", zIndex: 40 }}
+        >
+          &larr; Back
+        </button>
+      )}
       {!isLast && (
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" style={{ position: "fixed", right: "20px", bottom: "20px", zIndex: 40 }}>
           {!canContinue && blockedReason && (
-            <span className="text-xs muted">{blockedReason}</span>
+            <span className="text-xs muted card surf border px-3 py-2">{blockedReason}</span>
           )}
           <button
             onClick={() => { if (canContinue) (onContinue ? onContinue() : setActiveTab(activeTab + 1)); }}
             disabled={!canContinue}
-            className="btn btn-primary text-sm font-medium px-4 py-2"
+            className="btn btn-primary card text-sm font-medium px-4 py-2.5"
             style={!canContinue ? { opacity: 0.45, cursor: "not-allowed" } : {}}
             title={!canContinue ? blockedReason : undefined}
           >
@@ -520,7 +348,7 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
           </button>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -677,135 +505,12 @@ function Spinner() {
   );
 }
 
-function DbImportPanel({ onIngested, setToast }) {
-  const [open, setOpen] = useState(false);
-  const [provider, setProvider] = useState("postgresql");
-  const [host, setHost] = useState("localhost");
-  const [port, setPort] = useState(5432);
-  const [database, setDatabase] = useState("");
-  const [schemaField, setSchemaField] = useState("");
-  const [table, setTable] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [ssl, setSsl] = useState(false);
-  const [rowLimit, setRowLimit] = useState(50000);
-  const [isBusy, setIsBusy] = useState(false);
-  const [testResult, setTestResult] = useState(null);
-
-  useEffect(() => { setPort(provider === "postgresql" ? 5432 : 8123); }, [provider]);
-
-  function connConfig() {
-    return {
-      provider, host, port: Number(port) || null, database,
-      schema: schemaField || null, table, username: username || null,
-      password: password || null, ssl,
-    };
-  }
-
-  async function handleTest() {
-    setIsBusy(true);
-    setTestResult(null);
-    try {
-      await apiJson("/db/test-connection", { method: "POST", body: JSON.stringify(connConfig()) });
-      setTestResult({ ok: true, message: "Connected successfully." });
-    } catch (err) {
-      setTestResult({ ok: false, message: err.message });
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  async function handleIngest() {
-    setIsBusy(true);
-    try {
-      const res = await apiJson("/db/ingest", {
-        method: "POST",
-        body: JSON.stringify({ ...connConfig(), row_limit: Number(rowLimit) || null }),
-      });
-      onIngested(res);
-      setToast(
-        res.truncated
-          ? `Imported the first ${res.row_count.toLocaleString()} row(s) from ${provider}:${table} (row limit reached -- raise it to pull more).`
-          : `Imported ${res.row_count.toLocaleString()} row(s) from ${provider}:${table}.`
-      );
-      setOpen(false);
-    } catch (err) {
-      setToast(`Database import failed: ${err.message}`);
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)} className="text-xs mt-2" style={{ textDecoration: "underline", color: "var(--text-muted)" }}>
-        Or import a table from Postgres / ClickHouse
-      </button>
-    );
-  }
-
-  return (
-    <div className="surf2 border b rounded-lg p-3 mt-2 flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold muted uppercase tracking-wide">Import from database</span>
-        <button onClick={() => setOpen(false)} className="text-xs muted">&times;</button>
-      </div>
-      <div className="flex gap-2">
-        <select value={provider} onChange={(e) => setProvider(e.target.value)} className="surf border b rounded-md text-xs px-2 py-1.5 flex-1">
-          <option value="postgresql">PostgreSQL</option>
-          <option value="clickhouse">ClickHouse</option>
-        </select>
-        <label className="flex items-center gap-1.5 text-xs muted whitespace-nowrap">
-          <input type="checkbox" checked={ssl} onChange={(e) => setSsl(e.target.checked)} /> SSL
-        </label>
-      </div>
-      <div className="flex gap-2">
-        <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="host" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
-        <input value={port} onChange={(e) => setPort(e.target.value)} placeholder="port" className="surf border b rounded-md text-xs px-2 py-1.5" style={{ width: "72px" }} />
-      </div>
-      <input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="database" className="surf border b rounded-md text-xs px-2 py-1.5" />
-      <div className="flex gap-2">
-        <input value={schemaField} onChange={(e) => setSchemaField(e.target.value)} placeholder="schema (optional)" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
-        <input value={table} onChange={(e) => setTable(e.target.value)} placeholder="table" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
-      </div>
-      <div className="flex gap-2">
-        <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" autoComplete="off" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
-        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" type="password" autoComplete="off" className="surf border b rounded-md text-xs px-2 py-1.5 flex-1" />
-      </div>
-      <label className="flex items-center gap-1.5 text-xs muted">
-        Row limit
-        <input value={rowLimit} onChange={(e) => setRowLimit(e.target.value)} type="number" className="surf border b rounded-md text-xs px-2 py-1 flex-1" />
-      </label>
-      {testResult && (
-        <div
-          className="text-xs px-2 py-1.5 rounded-md"
-          style={{ background: testResult.ok ? "var(--success-soft)" : "var(--danger-soft)", color: testResult.ok ? "var(--success)" : "var(--danger)" }}
-        >
-          {testResult.message}
-        </div>
-      )}
-      <div className="flex gap-2 mt-1">
-        <button onClick={handleTest} disabled={isBusy || !host || !database} className="btn btn-ghost text-xs font-medium px-2.5 py-1.5 flex-1">Test connection</button>
-        <button onClick={handleIngest} disabled={isBusy || !host || !database || !table} className="btn btn-primary text-xs font-medium px-2.5 py-1.5 flex-1">
-          {isBusy ? "Importing..." : "Import table"}
-        </button>
-      </div>
-      <div className="text-xs muted">
-        Runs through the backend's own database drivers (psycopg2 / clickhouse-connect must be installed there --
-        see <code>/api/connectors/capabilities</code>). Credentials are sent once for this request and are never
-        stored or logged by ReLink.
-      </div>
-    </div>
-  );
-}
-
 function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, matchColumn, setMatchColumn, hierarchy, setHierarchy, setToast }) {
   const [isParsing, setIsParsing] = useState(false);
   const [pendingName, setPendingName] = useState("");
-  const [isDragOver, setIsDragOver] = useState(false);
-  const dragDepth = useRef(0);
 
-  function processFile(f) {
+  function handleUpload(e) {
+    const f = e.target.files[0];
     if (!f) return;
     setIsParsing(true);
     setPendingName(f.name);
@@ -841,50 +546,6 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
     );
   }
 
-  function handleUpload(e) {
-    processFile(e.target.files[0]);
-    e.target.value = "";
-  }
-
-  const ACCEPTED_EXT = [".csv", ".xlsx", ".xls", ".geojson", ".json"];
-  function isAcceptedFile(f) {
-    const name = (f.name || "").toLowerCase();
-    return ACCEPTED_EXT.some((ext) => name.endsWith(ext));
-  }
-
-  function handleDragEnter(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragDepth.current += 1;
-    if (!isParsing) setIsDragOver(true);
-  }
-  function handleDragOver(e) {
-    // Required for onDrop to fire at all -- browsers reject drops on
-    // elements that don't cancel dragover.
-    e.preventDefault();
-    e.stopPropagation();
-  }
-  function handleDragLeave(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragDepth.current = Math.max(0, dragDepth.current - 1);
-    if (dragDepth.current === 0) setIsDragOver(false);
-  }
-  function handleDrop(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragDepth.current = 0;
-    setIsDragOver(false);
-    if (isParsing) return;
-    const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (!f) return;
-    if (!isAcceptedFile(f)) {
-      setToast(`${f.name} isn't one of the accepted types (.csv, .xlsx, .xls, .geojson, .json).`);
-      return;
-    }
-    processFile(f);
-  }
-
   const idEqualsMatch = idColumn && matchColumn && idColumn === matchColumn;
   const hierarchyHasMatch = matchColumn && hierarchy.includes(matchColumn);
 
@@ -901,19 +562,7 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
         </div>
       )}
 
-      <div
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        className="surf2 border b rounded-lg px-3 py-6 flex flex-col items-center justify-center mb-4"
-        style={{
-          borderStyle: isDragOver ? "dashed" : "solid",
-          borderColor: isDragOver ? "var(--primary)" : undefined,
-          background: isDragOver ? "var(--primary-soft)" : undefined,
-          transition: "background-color .1s ease, border-color .1s ease",
-        }}
-      >
+      <div className="surf2 border b rounded-lg px-3 py-6 flex flex-col items-center justify-center mb-4">
         {isParsing ? (
           <>
             <Spinner />
@@ -924,7 +573,6 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
           <>
             <div className="text-sm font-medium">{file.name}</div>
             <div className="text-xs muted mt-1">{file.rowCount.toLocaleString()} rows detected</div>
-            <div className="text-xs muted mt-1">{isDragOver ? "Drop to upload" : "Drag a file here, or"}</div>
           </>
         )}
         <label className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-3" style={isParsing ? { opacity: 0.5, pointerEvents: "none" } : {}}>
@@ -932,16 +580,6 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
           <input type="file" accept=".csv,.xlsx,.xls,.geojson,.json" onChange={handleUpload} className="hidden" disabled={isParsing} />
         </label>
       </div>
-
-      <DbImportPanel
-        setToast={setToast}
-        onIngested={(res) => {
-          setFile({ name: res.filename, format: res.format, rowCount: res.row_count, columns: res.columns, geometry: null, geometryRows: null, fileId: res.file_id, uploadError: null });
-          setIdColumn(res.columns[0] || "");
-          setMatchColumn(res.columns[1] || res.columns[0] || "");
-          setHierarchy([]);
-        }}
-      />
 
       <div className="flex flex-col gap-3">
         <label className="flex flex-col gap-1.5">
@@ -2015,8 +1653,8 @@ function TabApproveFinalize(props) {
         </div>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 340px" }}>
-        <div className="overflow-y-auto p-5 flex flex-col gap-3" style={{ maxWidth: "920px" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 320px" }}>
+        <div className="overflow-y-auto p-4 flex flex-col gap-2">
           {visibleRows.map((r) => {
             const decided = isDecided(r);
             const rejected = isRejected(r);
@@ -2030,26 +1668,25 @@ function TabApproveFinalize(props) {
             return (
               <div
                 key={r.sourceId}
-                className={"card border p-4 flex items-center justify-between gap-5" + (isExiting ? " rowExiting" : "")}
+                className={"card border p-3.5 flex items-center justify-between gap-4" + (isExiting ? " rowExiting" : "")}
                 style={{ ...borderStyle, overflow: "hidden" }}
               >
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2.5 mb-1">
+                  <div className="flex items-center gap-2 mb-0.5">
                     <span className="text-xs muted font-mono">#{r.sourceId}</span>
-                    <span className="text-base font-semibold truncate">{r.sourceName}</span>
+                    <span className="text-sm font-semibold truncate">{r.sourceName}</span>
                     <span className="muted">&rarr;</span>
                     <span className="text-sm truncate">{best.name || "no candidate"}</span>
                   </div>
-                  <div className="text-xs muted flex items-center gap-1.5">
-                    <KindBadge kind={r.kind} />
-                    {best.score !== null ? `score ${(best.score * 100).toFixed(1)}%` : ""}
+                  <div className="text-xs muted">
+                    {r.kind}{best.score !== null ? `, score ${(best.score * 100).toFixed(1)}%` : ""}
                   </div>
                 </div>
-                <div className="flex items-center gap-2.5 flex-shrink-0">
-                  <button onClick={() => approveRow(r)} className="btn btn-success text-sm font-medium px-4 py-2">
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button onClick={() => approveRow(r)} className="btn btn-success text-xs font-medium px-3 py-1.5">
                     {r.approved ? "Approved" : "Approve"}
                   </button>
-                  <button onClick={() => rejectRow(r)} className="btn btn-danger text-sm font-medium px-4 py-2">
+                  <button onClick={() => rejectRow(r)} className="btn btn-danger text-xs font-medium px-3 py-1.5">
                     {rejected ? "Rejected" : "Reject"}
                   </button>
                 </div>
@@ -2371,61 +2008,6 @@ export default function RelinkStudio() {
   const [projectId, setProjectId] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [auditLog, setAuditLog] = useState([]);
-
-  /* Backend connection: address, auth session, and live /health status -- */
-  /* see ConnectionStatus in the top bar. Polled periodically so switching */
-  /* the backend between --local and --lan (or a teammate's sign-in       */
-  /* expiring) shows up without a page reload.                            */
-  const [apiBaseState, setApiBaseState] = useState(getApiBase());
-  const [authToken, setAuthTokenState] = useState(getAuthToken());
-  const [authUser, setAuthUser] = useState(null);
-  const [health, setHealth] = useState(null);
-  const [healthError, setHealthError] = useState(null);
-  const [isCheckingHealth, setIsCheckingHealth] = useState(true);
-
-  function refreshHealth() {
-    setIsCheckingHealth(true);
-    checkBackendHealth()
-      .then((h) => { setHealth(h); setHealthError(null); })
-      .catch((err) => { setHealth(null); setHealthError(err.message || "Could not reach the backend."); })
-      .finally(() => setIsCheckingHealth(false));
-  }
-
-  useEffect(() => {
-    refreshHealth();
-    const id = setInterval(refreshHealth, 15000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiBaseState]);
-
-  function handleApiBaseChange(newBase) {
-    const cleaned = newBase.trim().replace(/\/+$/, "");
-    if (!cleaned) return;
-    setApiBase(cleaned);
-    setApiBaseState(cleaned);
-    setToast(`Backend address updated to ${cleaned}.`);
-  }
-
-  async function handleLogin(username, password) {
-    const session = await loginToBackend(username, password);
-    setAuthToken(session.token);
-    setAuthTokenState(session.token);
-    setAuthUser(session.username);
-    setToast(`Signed in as ${session.username}.`);
-  }
-
-  function handleLogout() {
-    setAuthToken(null);
-    setAuthTokenState(null);
-    setAuthUser(null);
-    setToast("Signed out.");
-  }
-
-  const connection = {
-    apiBase: apiBaseState, onApiBaseChange: handleApiBaseChange,
-    health, healthError, isChecking: isCheckingHealth, onRefresh: refreshHealth,
-    isAuthenticated: !!authToken, authUser, onLogin: handleLogin, onLogout: handleLogout,
-  };
   const pollTimer = useRef(null);
 
   function methodStatus(score) {
@@ -2746,9 +2328,9 @@ export default function RelinkStudio() {
     <div data-theme={theme} className="rls" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{TOKENS_CSS}</style>
       {toast && <Toast toast={toast} onDone={() => setToast(null)} />}
-      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} connection={connection} />
+      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} />
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingBottom: "76px" }}>
         {activeTab === 0 && <TabSourcesShape {...tabProps} />}
         {activeTab === 1 && <TabHierarchyMethods {...tabProps} />}
         {activeTab === 2 && <TabSafetyRules {...tabProps} />}
@@ -2761,4 +2343,3 @@ export default function RelinkStudio() {
     </div>
   );
 }
-
