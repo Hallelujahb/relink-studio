@@ -184,15 +184,6 @@ const TOKENS_CSS = `
   input, textarea, select { outline: none; }
   input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   input[type="number"] { -moz-appearance: textfield; }
-  /* Browsers default the unfilled portion of a range slider to a fixed
-     light gray track, which reads as a stray white bar in dark mode.
-     accent-color (set inline per slider) only themes the filled side, the
-     track itself needs its own themed background here. */
-  input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 999px; background: var(--border); outline: none; }
-  input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: transparent; }
-  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; margin-top: -5px; background: var(--text); border: 2px solid var(--surface); cursor: pointer; }
-  input[type="range"]::-moz-range-track { height: 4px; border-radius: 999px; background: var(--border); }
-  input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--text); border: 2px solid var(--surface); cursor: pointer; }
   th { text-align: left; font-weight: 600; }
   .rls-grid-review { display: grid; grid-template-columns: 270px 1fr 350px; height: 100%; min-height: 0; }
   @media (max-width: 900px) {
@@ -421,10 +412,10 @@ function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChe
   );
 }
 
-function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged, connection, fastMode, setFastMode }) {
+function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged, connection }) {
   return (
     <div style={{ position: "sticky", top: 0, zIndex: 30, flexShrink: 0 }}>
-      <div className="surf border-b flex items-center justify-between px-5 py-2">
+      <div className="surf border-b flex items-center justify-between px-5 py-3">
         <div className="flex items-center gap-3">
           <Logo />
           <span className="font-semibold text-sm tracking-tight">ReLink Studio</span>
@@ -449,13 +440,6 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
             <input type="file" accept=".json" onChange={onUploadConfig} className="hidden" />
           </label>
           <button onClick={onDownloadConfig} className="btn btn-ghost text-xs font-medium px-3 py-1.5">Download config</button>
-          <label
-            className="text-xs muted flex items-center gap-1.5 cursor-pointer"
-            title="After the pipeline finishes, auto-approve rows with full method agreement at or above your auto-approve threshold, then drop you straight onto the short needs-attention list instead of the full checklist."
-          >
-            <input type="checkbox" checked={fastMode} onChange={(e) => setFastMode(e.target.checked)} />
-            Fast mode
-          </label>
           <button
             onClick={onExecutePipeline}
             disabled={isRunning || !canRun}
@@ -467,15 +451,14 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
           </button>
         </div>
       </div>
-      <div className="surf border-b flex items-center px-5 py-1.5 gap-2 overflow-x-auto">
+      <div className="surf border-b flex items-center px-5 py-2.5 gap-2 overflow-x-auto">
         {TAB_LABELS.map((label, i) => {
-          // The export tab produces the authoritative CSV, which only makes
-          // sense once review decisions are merged & finalized -- but rather
-          // than making the tab itself inert beforehand, it's left clickable
-          // and shows its own "Not ready to export yet" screen instead (see
-          // TabExportAudit), so you can always get in to see why.
+          // The export tab produces the authoritative CSV, which only
+          // makes sense once review decisions are merged & finalized --
+          // jumping straight there before that would let you download a
+          // partial/undecided set. Everything else stays freely navigable.
           const isExportTab = i === TAB_LABELS.length - 1;
-          const locked = false;
+          const locked = isExportTab && !merged;
           return (
             <div key={label} className="flex items-center gap-2">
               <div
@@ -544,28 +527,6 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
 /* ---------------------------------------------------------------------- */
 /* File parsing (real, used by Tab 1)                                    */
 /* ---------------------------------------------------------------------- */
-
-// A quick, honest heuristic, not a guarantee: scans header names for the
-// obvious conventions ("id", "source_id", "facility_name"...) so a lazy
-// person doesn't start from two blank dropdowns every single time. Always
-// overridable, never silently trusted for anything downstream.
-function guessIdColumn(columns) {
-  if (!columns || !columns.length) return "";
-  const lower = columns.map((c) => String(c).toLowerCase());
-  const exact = lower.indexOf("id");
-  if (exact !== -1) return columns[exact];
-  const idLike = lower.findIndex((c) => /(^|_)id($|_)/.test(c));
-  if (idLike !== -1) return columns[idLike];
-  return columns[0];
-}
-function guessMatchColumn(columns, idGuess) {
-  if (!columns || !columns.length) return "";
-  const lower = columns.map((c) => String(c).toLowerCase());
-  const nameLike = lower.findIndex((c, i) => columns[i] !== idGuess && /name|facility|label|title/.test(c));
-  if (nameLike !== -1) return columns[nameLike];
-  const fallback = columns.find((c) => c !== idGuess);
-  return fallback || columns[0];
-}
 
 function parseUploadedFile(file, onParsed, onError) {
   const ext = file.name.split(".").pop().toLowerCase();
@@ -857,9 +818,8 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
       f,
       async (parsed) => {
         setFile({ name: f.name, format: parsed.format, rowCount: parsed.rowCount, columns: parsed.columns, geometry: parsed.geometry, geometryRows: parsed.rows || null, fileId: null, uploadError: null });
-        const guessedId = guessIdColumn(parsed.columns);
-        setIdColumn(guessedId);
-        setMatchColumn(guessMatchColumn(parsed.columns, guessedId));
+        setIdColumn(parsed.columns[0] || "");
+        setMatchColumn(parsed.columns[1] || parsed.columns[0] || "");
         setHierarchy([]);
 
         // Server-side upload: this is what actually gets a file_id the
@@ -964,9 +924,8 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
             setToast={setToast}
             onIngested={(res) => {
               setFile({ name: res.filename, format: res.format, rowCount: res.row_count, columns: res.columns, geometry: null, geometryRows: null, fileId: res.file_id, uploadError: null });
-              const guessedId = guessIdColumn(res.columns);
-              setIdColumn(guessedId);
-              setMatchColumn(guessMatchColumn(res.columns, guessedId));
+              setIdColumn(res.columns[0] || "");
+              setMatchColumn(res.columns[1] || res.columns[0] || "");
               setHierarchy([]);
               setMode("upload");
             }}
@@ -1067,14 +1026,6 @@ function ShapeOption({ label, description, active, onClick, diagram }) {
   );
 }
 
-function makeEmptyStep(index) {
-  return {
-    id: `step_${Date.now()}_${index}`,
-    file: { name: "No file selected", format: "-", rowCount: 0, columns: ["(upload a file to see columns)"], geometry: null, geometryRows: null, fileId: null, uploadError: null },
-    idCol: "", matchCol: "", hierarchy: [],
-  };
-}
-
 function TabSourcesShape(props) {
   const {
     sourceFile, setSourceFile, sourceIdCol, setSourceIdCol, sourceMatchCol, setSourceMatchCol, sourceHierarchy, setSourceHierarchy,
@@ -1082,22 +1033,11 @@ function TabSourcesShape(props) {
     shape, setShape, chainSteps, setChainSteps, setToast, setActiveTab,
   } = props;
 
-  function addStep() {
-    setChainSteps([...chainSteps, makeEmptyStep(chainSteps.length)]);
-  }
-  function removeStep(id) {
-    setChainSteps(chainSteps.filter((s) => s.id !== id));
-    setToast("Step removed.");
-  }
-  function updateStep(id, patch) {
-    setChainSteps(chainSteps.map((s) => (s.id === id ? { ...s, ...(typeof patch === "function" ? patch(s) : patch) } : s)));
-  }
-
   return (
     <div className="p-5 max-w-5xl mx-auto flex flex-col gap-4">
       {(sourceFile.name === "No source file selected" || targetFile.name === "No target file selected") && (
         <div className="card surf2 border p-3 text-xs muted">
-          Upload a source file and a target file below to get started, CSV, Excel, or GeoJSON both work. Files are parsed locally for the preview you see here, and also uploaded to the backend to actually run the matching pipeline.
+          Upload a source file and a target file below to get started, CSV, Excel, or GeoJSON both work. Everything happens locally in this browser: files are parsed and matched on your machine, nothing is uploaded to a server, and there's no separate path or config file to set up.
         </div>
       )}
 
@@ -1125,38 +1065,27 @@ function TabSourcesShape(props) {
         </div>
 
         {shape !== "single" && (
-          <div className="mt-4 flex flex-col gap-3">
+          <div className="mt-4 flex flex-col gap-2">
             <div className="text-xs font-semibold muted uppercase tracking-wide">{shape === "chained" ? "Chain steps" : "Spokes"}</div>
             <div className="surf2 border b rounded-md px-3.5 py-2.5 flex items-center justify-between">
               <span className="text-xs font-semibold muted">STEP 1 (base)</span>
-              <span className="text-sm">{targetFile.name} (base level, from the Target card above)</span>
+              <span className="text-sm">{targetFile.name} (base level)</span>
             </div>
-            <div className="flex gap-4 flex-wrap">
-              {chainSteps.map((step, i) => (
-                <div key={step.id} style={{ minWidth: 280, flex: "1 1 280px" }}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold muted">
-                      STEP {i + 2}{shape === "chained" ? `, matches against Step ${i + 1}'s result` : ", matches against the original Source"}
-                    </span>
-                    <button onClick={() => removeStep(step.id)} className="btn text-xs font-medium px-2 py-1" style={{ color: "var(--danger)" }}>Remove</button>
-                  </div>
-                  <FilePickerCard
-                    role={shape === "chained" ? `Step ${i + 2} target` : `Spoke ${i + 2}`}
-                    file={step.file} setFile={(f) => updateStep(step.id, (s) => ({ file: typeof f === "function" ? f(s.file) : f }))}
-                    columns={step.file.columns} idColumn={step.idCol} setIdColumn={(v) => updateStep(step.id, { idCol: v })}
-                    matchColumn={step.matchCol} setMatchColumn={(v) => updateStep(step.id, { matchCol: v })}
-                    hierarchy={step.hierarchy} setHierarchy={(v) => updateStep(step.id, (s) => ({ hierarchy: typeof v === "function" ? v(s.hierarchy) : v }))}
-                    setToast={setToast}
-                  />
+            {chainSteps.map((s, i) => (
+              <div key={s} className="surf2 border b rounded-md px-3.5 py-2.5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-semibold muted">STEP {i + 2}</span>
+                  <span className="text-sm">{s}</span>
                 </div>
-              ))}
-            </div>
-            <button onClick={addStep} className="btn btn-ghost text-sm font-medium px-3 py-2 self-start">
+                <button onClick={() => { setChainSteps(chainSteps.filter((x) => x !== s)); setToast("Step removed."); }} className="btn text-xs font-medium px-2 py-1" style={{ color: "var(--danger)" }}>Remove</button>
+              </div>
+            ))}
+            <button
+              onClick={() => { setChainSteps([...chainSteps, `new target file (${shape === "chained" ? "chained" : "spoke"} ${chainSteps.length + 2})`]); setToast("New step added."); }}
+              className="btn btn-ghost text-sm font-medium px-3 py-2 self-start"
+            >
               + Add {shape === "chained" ? "chain step" : "spoke"}
             </button>
-            <div className="text-xs muted px-1">
-              This captures the full multi-step shape and sends it to the backend, but the matching engine itself only executes one step at a time so far, each step here still needs its own file uploaded and columns picked, same as Source and Target above.
-            </div>
           </div>
         )}
       </div>
@@ -1197,42 +1126,12 @@ function TabHierarchyMethods(props) {
     methodA, setMethodA, methodB, setMethodB, methodC, setMethodC, methodD, setMethodD, methodE, setMethodE,
     blockingFloor, setBlockingFloor, keepDigits, setKeepDigits, stripParens, setStripParens,
     stripSuffixWords, setStripSuffixWords, caseSensitive, setCaseSensitive, setActiveTab,
-    sourceFile, targetFile, setToast,
   } = props;
 
   const chain = sourceHierarchy.length ? [...sourceHierarchy, "Match column"] : ["Level 1", "Level 2", "Level 3"];
-  const maxRows = Math.max(sourceFile.rowCount || 0, targetFile.rowCount || 0);
-  const bothHaveGeometry = !!(sourceFile.geometry && targetFile.geometry);
-
-  function applyRecommended() {
-    setMethodA(true);
-    setMethodB(true);
-    setMethodC(false);
-    setMethodD(bothHaveGeometry);
-    setMethodE(maxRows >= 10000);
-    setAutoApprove(0.95);
-    setNeedsReview(0.80);
-    setBlockingFloor(0.60);
-    setKeepDigits(true);
-    setStripParens(true);
-    setCaseSensitive(false);
-    setToast(
-      maxRows >= 10000
-        ? `Applied recommended settings, including Splink since you're linking ${maxRows.toLocaleString()} rows.`
-        : "Applied recommended settings for a run this size."
-    );
-  }
 
   return (
     <div className="p-5 max-w-5xl mx-auto flex flex-col gap-4">
-      <div className="card surf2 border p-3.5 flex items-center justify-between gap-3">
-        <div className="text-xs muted">
-          Based on your files: {maxRows > 0 ? `${maxRows.toLocaleString()} rows, ` : ""}{bothHaveGeometry ? "geometry on both sides" : "no geometry on one or both sides"}.
-          {maxRows >= 10000 && " Recommended settings would turn on Splink for a run this size."}
-        </div>
-        <button onClick={applyRecommended} className="btn btn-primary text-xs font-medium px-3 py-1.5 flex-shrink-0">Use recommended settings</button>
-      </div>
-
       <div className="card surf border p-4">
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Hierarchy chain</div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1360,33 +1259,8 @@ function TabSafetyRules(props) {
     }
   }, [excludePattern]);
 
-  const SAFETY_PRESETS = {
-    strict: { collisionGuard: true, allowManyToOne: false, autoDowngradeTies: true, requireHierarchyMatch: true, strictZoneMatch: true, flagLowCoverageZones: true },
-    balanced: { collisionGuard: true, allowManyToOne: false, autoDowngradeTies: true, requireHierarchyMatch: true, strictZoneMatch: false, flagLowCoverageZones: true },
-    loose: { collisionGuard: false, allowManyToOne: true, autoDowngradeTies: false, requireHierarchyMatch: false, strictZoneMatch: false, flagLowCoverageZones: false },
-  };
-  function applySafetyPreset(name) {
-    const p = SAFETY_PRESETS[name];
-    setCollisionGuard(p.collisionGuard);
-    setAllowManyToOne(p.allowManyToOne);
-    setAutoDowngradeTies(p.autoDowngradeTies);
-    setRequireHierarchyMatch(p.requireHierarchyMatch);
-    setStrictZoneMatch(p.strictZoneMatch);
-    setFlagLowCoverageZones(p.flagLowCoverageZones);
-  }
-
   return (
     <div className="p-5 max-w-5xl mx-auto flex flex-col gap-4">
-      <div className="card surf border p-4">
-        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Quick preset</div>
-        <div className="flex gap-3">
-          <ShapeOption label="Strict" description="Every safeguard on. Slower to reach full coverage, fewest false positives." active={false} onClick={() => applySafetyPreset("strict")} diagram="most caution" />
-          <ShapeOption label="Balanced" description="A sensible default: collision guard and hierarchy checks on, exact zone matching off." active={false} onClick={() => applySafetyPreset("balanced")} diagram="the defaults below" />
-          <ShapeOption label="Loose" description="Minimal friction, trusts the name match more than the surrounding rules. More coverage, more to double-check." active={false} onClick={() => applySafetyPreset("loose")} diagram="least caution" />
-        </div>
-        <div className="text-xs muted mt-3">Just sets the toggles below to a starting combination, feel free to fine-tune any of them afterward.</div>
-      </div>
-
       <div className="card surf border p-4">
         <div className="flex items-start justify-between">
           <div className="flex-1">
@@ -1823,7 +1697,7 @@ function TabReviewQueue(props) {
           </div>
           <div className="flex-1 overflow-y-auto">
             {pagedRows.map((r) => (
-              <div key={r.sourceId} onClick={() => setSelectedId(r.sourceId)} className="cursor-pointer px-3.5 py-3 border-b b" style={r.sourceId === selectedId ? { background: "var(--primary-soft)" } : {}}>
+              <div key={r.sourceId} onClick={() => setSelectedId(r.sourceId)} className={`cursor-pointer px-3.5 py-3 border-b b ${r.approved ? "approvedGlow" : ""}`} style={r.sourceId === selectedId ? { background: "var(--primary-soft)" } : {}}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs muted font-mono">#{r.sourceId}</span>
                   <div className="flex items-center gap-1.5">
@@ -1958,7 +1832,7 @@ function TabReviewQueue(props) {
 function TabApproveFinalize(props) {
   const {
     rows, setToast, patchReviewRow, bulkReview, undoReview,
-    pendingDecisions, setPendingDecisions, merged, setMerged, finalRows, setActiveTab, autoApprove,
+    pendingDecisions, setPendingDecisions, merged, setMerged, finalRows, setActiveTab,
   } = props;
   const [statusFilter, setStatusFilter] = useState("undecided");
   // A row that just got decided is held in view briefly so its green/red
@@ -2075,71 +1949,6 @@ function TabApproveFinalize(props) {
     setToast(`Approved ${targets.length} remaining row(s) using each row's best available candidate.`);
   }
 
-  // ---- Bulk triage: the lazy-but-reasonable path ------------------------
-  // "Safe to bulk" mirrors approveAllConsensus's own definition of consensus
-  // (>=2 methods agreeing on the same target, not a collision) so the two
-  // don't quietly disagree with each other. Everything undecided that isn't
-  // safe becomes "needs you", grouped by kind so a whole category can be
-  // signed off in one tap instead of row by row.
-  function isSafeToBulk(r) {
-    const candidates = Object.values(r.methods).filter((m) => m.targetId !== null);
-    const uniqueTargets = new Set(candidates.map((m) => m.targetId));
-    return candidates.length >= 2 && uniqueTargets.size === 1 && r.kind !== "collision";
-  }
-  const undecidedRows = useMemo(() => rows.filter((r) => !isDecided(r)), [rows, pendingDecisions]);
-  const safeRows = useMemo(() => undecidedRows.filter(isSafeToBulk), [undecidedRows]);
-  const needsYouByKind = useMemo(() => {
-    const groups = {};
-    undecidedRows.forEach((r) => {
-      if (isSafeToBulk(r)) return;
-      const k = r.kind || "unmatched";
-      (groups[k] = groups[k] || []).push(r);
-    });
-    return Object.entries(groups)
-      .map(([kind, list]) => {
-        const scores = list.map((r) => bestCandidate(r, candidateKeys).score).filter((s) => s !== null);
-        const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
-        return { kind, rows: list, avg };
-      })
-      .sort((a, b) => b.rows.length - a.rows.length);
-  }, [undecidedRows, candidateKeys]);
-
-  // Local only -- seeded from the Hierarchy & methods setting so it starts
-  // somewhere sensible, but dragging it here is a one-off for this action
-  // and never writes back to that saved setting.
-  const [thresholdPct, setThresholdPct] = useState(() => Math.round((autoApprove ?? 0.9) * 100));
-  const thresholdMatches = useMemo(
-    () => undecidedRows.filter((r) => {
-      const s = bestCandidate(r, candidateKeys).score;
-      return s !== null && s * 100 >= thresholdPct;
-    }),
-    [undecidedRows, thresholdPct, candidateKeys]
-  );
-  // Collapsed by default -- it's genuinely useful but tall once open, and
-  // shouldn't eat the vertical space every single row list has to fit in
-  // before anyone's actually asked for it.
-  const [triageOpen, setTriageOpen] = useState(false);
-
-  async function approveByIds(ids, message) {
-    if (ids.length === 0) { setToast("Nothing to approve there."); return; }
-    const undoToken = await bulkReview("approve", ids);
-    setPendingDecisions((prev) => {
-      const next = { ...prev };
-      ids.forEach((id) => { next[id] = "approved"; });
-      return next;
-    });
-    setToast({ message, undo: undoToken ? () => { undoReview(undoToken); setToast("Undone."); } : undefined });
-  }
-  function approveByThreshold() {
-    approveByIds(thresholdMatches.map((r) => r.sourceId), `Approved ${thresholdMatches.length} row(s) scoring ${thresholdPct}% or above.`);
-  }
-  function signOffKind(kind, list) {
-    approveByIds(list.map((r) => r.sourceId), `Signed off all ${list.length} ${(KIND_META[kind] && KIND_META[kind].label) || kind} row(s).`);
-  }
-  function approveAllSafe() {
-    approveByIds(safeRows.map((r) => r.sourceId), `Approved ${safeRows.length} row(s) with full method agreement, nothing to review there.`);
-  }
-
   async function mergeAndFinalize() {
     if (undecidedCount > 0) {
       setToast(`${undecidedCount} row(s) still undecided. Approve, reject, or use "Approve all remaining" first.`);
@@ -2207,7 +2016,7 @@ function TabApproveFinalize(props) {
 
   return (
     <div className="flex flex-col" style={{ height: "100%" }}>
-      <div className="flex items-center justify-between px-5 py-2 border-b b">
+      <div className="flex items-center justify-between px-5 py-3 border-b b">
         <div>
           <div className="text-sm font-semibold">Pending approvals</div>
           <div className="text-xs muted">{undecidedCount} undecided, {statusCounts.approved} approved, {statusCounts.rejected} rejected</div>
@@ -2223,71 +2032,6 @@ function TabApproveFinalize(props) {
           )}
         </div>
       </div>
-
-      {statusFilter === "undecided" && undecidedCount > 0 && (
-        <div className="border-b b px-5 py-1.5" style={{ flexShrink: 0 }}>
-          <button onClick={() => setTriageOpen(!triageOpen)} className="text-xs font-semibold muted uppercase tracking-wide">
-            Bulk actions {triageOpen ? "\u25BE" : "\u25B8"}
-          </button>
-          {triageOpen && (
-            <div className="mt-3 flex flex-col gap-2.5">
-              <div className="flex gap-2.5 items-stretch flex-wrap">
-                <div className="card surf2 border p-3.5" style={{ flex: "1 1 320px" }}>
-                  <div className="text-sm font-medium mb-0.5">Approve everything at or above a score</div>
-                  <div className="text-xs muted mb-2">starts from your Hierarchy &amp; methods threshold, dragging here won't change that setting</div>
-                  <div className="flex items-center gap-3">
-                    <input type="range" min="0" max="100" value={thresholdPct} onChange={(e) => setThresholdPct(Number(e.target.value))} style={{ flex: 1 }} />
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <input
-                        type="number" min="0" max="100" value={thresholdPct}
-                        onChange={(e) => setThresholdPct(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
-                        className="surf2 border b rounded-md text-sm font-semibold text-right px-2 py-1"
-                        style={{ width: "56px" }}
-                      />
-                      <span className="text-sm font-semibold">%</span>
-                    </div>
-                    <button
-                      onClick={approveByThreshold}
-                      disabled={thresholdMatches.length === 0}
-                      className="btn btn-success text-xs font-medium px-3 py-1.5 flex-shrink-0"
-                      style={thresholdMatches.length === 0 ? { opacity: 0.5, cursor: "not-allowed" } : {}}
-                    >
-                      Approve {thresholdMatches.length} row(s)
-                    </button>
-                  </div>
-                </div>
-
-                {safeRows.length > 0 && (
-                  <div className="card border p-3.5 flex flex-col justify-between gap-2" style={{ flex: "1 1 260px", borderColor: "var(--success-border)", background: "var(--success-soft)" }}>
-                    <div>
-                      <div className="text-sm font-medium">Safe to bulk-approve: {safeRows.length} row(s)</div>
-                      <div className="text-xs muted mt-0.5">Heuristic, not a judgment call: full agreement across every method that returned a candidate, not a collision.</div>
-                    </div>
-                    <button onClick={approveAllSafe} className="btn btn-success text-xs font-medium px-3 py-1.5 self-start">Approve all {safeRows.length}</button>
-                  </div>
-                )}
-              </div>
-
-              {needsYouByKind.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold muted uppercase tracking-wide mb-2">Needs a look, by category</div>
-                  <div className="flex flex-col gap-2">
-                    {needsYouByKind.map(({ kind, rows: list, avg }) => (
-                      <div key={kind} className="card border p-3 flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-2.5">
-                          <KindBadge kind={kind} />
-                          <span className="text-sm">{list.length} row(s){avg !== null ? `, avg score ${(avg * 100).toFixed(0)}%` : ""}</span>
-                        </div>
-                        <button onClick={() => signOffKind(kind, list)} className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex-shrink-0">Sign off all {list.length}</button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 340px" }}>
         <div className="overflow-y-auto p-5 flex flex-col gap-3" style={{ maxWidth: "920px" }}>
@@ -2491,10 +2235,10 @@ function TabExportAudit(props) {
           <div className="text-sm font-semibold mb-1.5">Not ready to export yet</div>
           <div className="text-sm muted mb-4">
             Export produces the authoritative, final answer set. It only makes sense once every review row has been
-            decided and you've merged and finalized. Otherwise you'd be downloading a partial or undecided result.
+            decided and you've merged and finalized -- otherwise you'd be downloading a partial or undecided result.
           </div>
           <button onClick={() => setActiveTab(3)} className="btn btn-primary text-sm font-medium px-4 py-2">
-            &larr; Finish review &amp; approval, then come back
+            &larr; Go finish review &amp; finalize
           </button>
         </div>
       </div>
@@ -2529,18 +2273,10 @@ function TabExportAudit(props) {
       </div>
 
       <div className="card surf border p-4">
-        <div className="flex items-center justify-between mb-1">
-          <div className="text-sm font-semibold">Just get the file</div>
-          <button onClick={() => doExport("csv")} className="btn btn-primary text-sm font-semibold px-5 py-2.5">Download CSV</button>
-        </div>
-        <div className="text-xs muted">The authoritative export, source ID, source name, target ID, target name, method, and score for every approved row. If you don't want to think about format or columns, this is the one.</div>
-      </div>
-
-      <div className="card surf border p-4">
-        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Other formats</div>
+        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Export</div>
         <div className="flex gap-3">
           {["csv", "xlsx", "geojson"].map((fmt) => (
-            <button key={fmt} onClick={() => doExport(fmt)} className="btn btn-ghost border text-sm font-medium px-5 py-2.5 flex-1">Download .{fmt}</button>
+            <button key={fmt} onClick={() => doExport(fmt)} className="btn btn-primary text-sm font-medium px-5 py-2.5 flex-1">Download .{fmt}</button>
           ))}
         </div>
         {format && <div className="text-xs muted mt-3">Last export: {format}, {mode} mode</div>}
@@ -2653,56 +2389,6 @@ export default function RelinkStudio() {
   const [projectId, setProjectId] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [auditLog, setAuditLog] = useState([]);
-  // Skips the full flat checklist for anyone happy trusting the defaults:
-  // bulk-approves the same "safe" rows the Approve & finalize triage panel
-  // would offer to bulk-approve, immediately after the pipeline finishes,
-  // and drops straight onto the short needs-you list.
-  const [fastMode, setFastMode] = useState(false);
-
-  // Only the theme survived a refresh before this -- the project itself
-  // was gone the moment the tab reloaded, even though the backend still
-  // had it and every decision made against it. This is the fix: the
-  // backend project id (nothing else, no file contents) persists, and an
-  // accidental refresh becomes a one-click "resume" instead of starting
-  // over from an empty Sources & shape tab.
-  const RESUME_KEY = "relink_studio_last_project";
-  const [resumeInfo, setResumeInfo] = useState(() => {
-    try {
-      const raw = localStorage.getItem(RESUME_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  });
-  const [resumeDismissed, setResumeDismissed] = useState(false);
-
-  useEffect(() => {
-    if (!projectId) return;
-    try {
-      localStorage.setItem(RESUME_KEY, JSON.stringify({
-        projectId,
-        sourceName: sourceFile.name,
-        targetName: targetFile.name,
-        savedAt: new Date().toISOString(),
-      }));
-    } catch { /* private browsing etc, non-fatal */ }
-  }, [projectId]);
-
-  async function resumeLastProject() {
-    if (!resumeInfo) return;
-    setToast("Resuming your last project...");
-    try {
-      const rows = await fetchAllReviewRows(resumeInfo.projectId);
-      setProjectId(resumeInfo.projectId);
-      setReviewRows(rows);
-      setReviewSelectedId(rows[0]?.sourceId ?? null);
-      setPendingDecisions({});
-      setActiveTab(4);
-      setToast(`Resumed: ${rows.length} row(s) loaded.`);
-    } catch (e) {
-      setToast(`Couldn't resume that project, it may no longer exist on the backend: ${e.message}`);
-      try { localStorage.removeItem(RESUME_KEY); } catch { /* non-fatal */ }
-      setResumeInfo(null);
-    }
-  }
 
   /* Backend connection: address, auth session, and live /health status -- */
   /* see ConnectionStatus in the top bar. Polled periodically so switching */
@@ -2797,17 +2483,6 @@ export default function RelinkStudio() {
       setToast("Upload both a source and target file (with a successful backend upload) before running.");
       return;
     }
-    if (shape !== "single") {
-      const incomplete = chainSteps.find((s) => !s.file.fileId || !s.idCol || !s.matchCol);
-      if (chainSteps.length === 0) {
-        setToast(`Add at least one ${shape === "chained" ? "chain step" : "spoke"}, or switch back to Single link.`);
-        return;
-      }
-      if (incomplete) {
-        setToast("Every step needs its own file uploaded and ID/match columns picked before running.");
-        return;
-      }
-    }
     if (!methodA && !methodB && !methodC && !methodD && !methodE) {
       setToast("Enable at least one matching method (Tab 2) before running.");
       return;
@@ -2852,40 +2527,8 @@ export default function RelinkStudio() {
       setReviewSelectedId(rows[0]?.sourceId ?? null);
       setPendingDecisions({});
       setMerged(false);
-
-      if (fastMode) {
-        // Same "safe to bulk" definition as the Approve & finalize triage
-        // panel: full method agreement, not a collision, score at or above
-        // the auto-approve threshold. Uses project.id directly rather than
-        // the projectId state (which hasn't re-rendered yet at this point
-        // in the same synchronous flow that just called setProjectId).
-        const eligible = rows.filter((r) => {
-          const candidates = Object.values(r.methods).filter((m) => m.targetId !== null);
-          const uniqueTargets = new Set(candidates.map((m) => m.targetId));
-          const bestScore = candidates.length ? Math.max(...candidates.map((m) => m.score ?? 0)) : null;
-          return candidates.length >= 2 && uniqueTargets.size === 1 && r.kind !== "collision" && bestScore !== null && bestScore >= autoApprove;
-        });
-        let approvedCount = 0;
-        if (eligible.length > 0) {
-          try {
-            await apiJson(`/projects/${project.id}/review/bulk`, {
-              method: "POST",
-              body: JSON.stringify({ action: "approve", source_ids: eligible.map((r) => r.sourceId) }),
-            });
-            const approvedIds = new Set(eligible.map((r) => r.sourceId));
-            setReviewRows(rows.map((r) => (approvedIds.has(r.sourceId) ? { ...r, approved: true } : r)));
-            setPendingDecisions(Object.fromEntries(eligible.map((r) => [r.sourceId, "approved"])));
-            approvedCount = eligible.length;
-          } catch (e) {
-            setToast(`Fast mode's auto-approve step failed, every row is still here to review manually: ${e.message}`);
-          }
-        }
-        setToast({ message: `Pipeline finished: ${rows.length} row(s) matched${approvedCount ? `, ${approvedCount} auto-approved` : ""}. ${rows.length - approvedCount} left to look at.` });
-        setActiveTab(4);
-      } else {
-        setToast({ message: `Pipeline finished: ${rows.length} row(s) matched. Opening the review queue.` });
-        setActiveTab(3);
-      }
+      setToast({ message: `Pipeline finished: ${rows.length} row(s) matched. Opening the review queue.` });
+      setActiveTab(3);
     } catch (e) {
       setToast(`Pipeline run failed: ${e.message}`);
     } finally {
@@ -3006,16 +2649,7 @@ export default function RelinkStudio() {
         type_column: typeColumn, type_expected: typeExpected, allow_many_to_one: allowManyToOne,
       },
       linking_shape: shape,
-      // Each step names what it matches against (the base target for the
-      // first extra step, the previous step for later ones in a chain, or
-      // always the original source for a hub spoke) so the backend can
-      // build the right dependency order without guessing.
-      chain_steps: shape !== "single" ? chainSteps.map((s, i) => ({
-        step_id: s.id,
-        input_ref: shape === "chained" ? (i === 0 ? "target" : chainSteps[i - 1].id) : "source",
-        file: s.file.name, file_id: s.file.fileId,
-        id_column: s.idCol, match_column: s.matchCol, hierarchy: s.hierarchy,
-      })) : [],
+      chain_steps: shape !== "single" ? chainSteps : [],
       methods: [methodA && "fuzzy", methodB && "recordlinkage", methodD && "geometry_corroboration", methodE && "splink"].filter(Boolean),
       thresholds: { auto_approve: autoApprove, needs_review: needsReview },
       matching: { blocking_floor: blockingFloor, keep_digits: keepDigits, strip_parentheticals: stripParens, strip_suffix_words: stripSuffixWords, case_sensitive: caseSensitive },
@@ -3052,15 +2686,7 @@ export default function RelinkStudio() {
           setAllowManyToOne(c.target.allow_many_to_one ?? allowManyToOne);
         }
         if (c.linking_shape) setShape(c.linking_shape);
-        if (c.chain_steps) {
-          // A config file only carries column choices, not the files
-          // themselves, each step comes back needing its file reattached.
-          setChainSteps(c.chain_steps.map((s, i) => ({
-            id: s.step_id || `step_${Date.now()}_${i}`,
-            file: { name: "No file selected", format: "-", rowCount: 0, columns: ["(upload a file to see columns)"], geometry: null, geometryRows: null, fileId: null, uploadError: null },
-            idCol: s.id_column || "", matchCol: s.match_column || "", hierarchy: s.hierarchy || [],
-          })));
-        }
+        if (c.chain_steps) setChainSteps(c.chain_steps);
         if (c.methods) {
           setMethodA(c.methods.includes("fuzzy"));
           setMethodB(c.methods.includes("recordlinkage"));
@@ -3117,21 +2743,12 @@ export default function RelinkStudio() {
   // Keeps the nav footer's enabled/disabled state consistent across every tab.
   const filesReady = sourceFile.name !== "No source file selected" && targetFile.name !== "No target file selected"
     && sourceIdCol && sourceMatchCol && targetIdCol && targetMatchCol
-    && sourceFile.fileId && targetFile.fileId
-    && (shape === "single" || (chainSteps.length > 0 && chainSteps.every((s) => s.file.fileId && s.idCol && s.matchCol)));
+    && sourceFile.fileId && targetFile.fileId;
   const methodChosen = methodA || methodB || methodC || methodD || methodE;
 
   let navProps = { activeTab, setActiveTab };
   if (activeTab === 0) {
-    navProps = {
-      ...navProps,
-      canContinue: filesReady,
-      blockedReason: (sourceFile.uploadError || targetFile.uploadError)
-        ? "Backend upload failed for one of your files, check the warning above and re-upload."
-        : (shape !== "single" && chainSteps.some((s) => !s.file.fileId || !s.idCol || !s.matchCol))
-        ? "Every chain step/spoke needs its own file uploaded and columns picked too."
-        : "Upload both a source and target file to continue.",
-    };
+    navProps = { ...navProps, canContinue: filesReady, blockedReason: (sourceFile.uploadError || targetFile.uploadError) ? "Backend upload failed for one of your files, check the warning above and re-upload." : "Upload both a source and target file to continue." };
   } else if (activeTab === 1) {
     navProps = { ...navProps, canContinue: methodChosen, blockedReason: "Enable at least one matching method to continue." };
   } else if (activeTab === 4) {
@@ -3147,20 +2764,7 @@ export default function RelinkStudio() {
     <div data-theme={theme} className="rls" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{TOKENS_CSS}</style>
       {toast && <Toast toast={toast} onDone={() => setToast(null)} />}
-      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} connection={connection} fastMode={fastMode} setFastMode={setFastMode} />
-
-      {resumeInfo && !resumeDismissed && resumeInfo.projectId !== projectId && (
-        <div className="surf border-b b px-5 py-2.5 flex items-center justify-between gap-3" style={{ flexShrink: 0, background: "var(--primary-soft)" }}>
-          <div className="text-xs">
-            <span className="font-semibold">Resume your last project?</span>{" "}
-            <span className="muted">{resumeInfo.sourceName} &harr; {resumeInfo.targetName}, saved {new Date(resumeInfo.savedAt).toLocaleString()}.</span>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button onClick={resumeLastProject} className="btn btn-primary text-xs font-medium px-3 py-1.5">Resume</button>
-            <button onClick={() => setResumeDismissed(true)} className="btn btn-ghost text-xs font-medium px-2 py-1.5">Dismiss</button>
-          </div>
-        </div>
-      )}
+      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} connection={connection} />
 
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         {activeTab === 0 && <TabSourcesShape {...tabProps} />}
