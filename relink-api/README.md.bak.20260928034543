@@ -9,7 +9,7 @@ in this conversation to wrap, so this is a fresh implementation.
 
 ```bash
 pip install -r requirements.txt
-python run.py          # http://127.0.0.1:5000 (local mode; RELINK_MODE=lan binds 0.0.0.0)
+python run.py          # http://0.0.0.0:5000
 ```
 
 Or, installed as a package:
@@ -58,7 +58,7 @@ pip install pytest
 python -m pytest tests/ -v
 ```
 
-Tests: matching-engine unit tests (normalization, methods A/B/D,
+53 tests: matching-engine unit tests (normalization, methods A/B/D,
 threshold/type-leak/collision-guard/tie-downgrade logic in the agreement
 combiner), parser unit tests (including a regression test for the xlsx
 trailing-empty-rows bug), config/LAN-mode unit tests (`test_config.py`:
@@ -66,12 +66,13 @@ RELINK_MODE/HOST/PORT/REQUIRE_AUTH/CORS_ORIGINS resolution, invalid-value
 errors, the `/health` endpoint, and that LAN mode's auth-required default
 actually gates a real route), and API-level integration tests covering
 the full upload -> project -> run -> review -> bulk -> undo -> export ->
-audit flow, plus auth and the approval hierarchy. Run them yourself to confirm on your machine.
+audit flow, plus auth and the approval hierarchy. All 53 pass as of this
+writing -- rerun them yourself, don't take that on faith.
 
 ## Section-by-section status
 
 **1. JSON API** -- done. All endpoints below `/api`; see `openapi.yaml`
-for the full contract (every route under /api).
+for the full contract (19 paths).
 
 **2. Persistence** -- done. SQLite (`app/db.py`): `files`, `projects`,
 `jobs`, `review_rows`, `decisions` (real undo log, not a single
@@ -124,7 +125,7 @@ alongside the API (SPA catch-all route included).
 **8. Testing** -- done, see above.
 
 **9. Documentation** -- this README, plus `openapi.yaml` (OpenAPI 3.0,
-every route under /api, request/response schemas including `ReviewRow` and
+all 19 paths, request/response schemas including `ReviewRow` and
 `ProjectConfig`).
 
 ## A real bug this pass caught and fixed
@@ -140,24 +141,10 @@ curl flow after making the change -- not by inspection -- which is
 exactly why that flow is now also a permanent pytest test
 (`test_full_review_flow`, `test_auth_register_login_and_audit_attribution`).
 
-## Method C, auth, and cleanup notes
+## API contract note (carried over from the first pass)
 
-- **Method C** (`"embedding"` in `config.methods`) is a real optional method
-  in `app/matching_embedding.py`, using a local sentence-transformers model.
-  Install with `pip install -r requirements-embedding.txt` (pulls PyTorch).
-  Without it the run still completes, but the job message and audit log carry
-  a warning that Method C did not run. A model given by name is downloaded
-  once from the Hugging Face hub; for fully offline use set
-  `RELINK_EMBEDDING_MODEL` to a local directory and `RELINK_EMBEDDING_OFFLINE=1`.
-  It scores every source row against every target row (no blocking).
-- **Custom methods** in the frontend are stored in the config package only.
-  The backend deliberately does not load or execute user-supplied scripts.
-- **Auth:** with `RELINK_REQUIRE_AUTH` on (the LAN default) every `/api`
-  route needs a bearer token except `/api/auth/login` and `/api/auth/register`.
-  The first registered account bootstraps (any role); after that only a
-  logged-in lead can create leads, and with auth required only a lead can
-  create accounts.
-- **Cleanup:** `POST /api/admin/cleanup` only deletes files inside the upload
-  directory that no project references, and needs the `lead` role when auth is
-  required.
-- The frontend is fully wired to this API (`relink_studio.jsx`).
+The frontend's `buildConfigObject()` doesn't carry a file identifier --
+`POST /api/projects` expects `{ config, source_file_id, target_file_id }`,
+with the file IDs coming from `POST /api/upload`. Wiring the frontend to
+actually call this API instead of its current local-only flow is
+separate work.

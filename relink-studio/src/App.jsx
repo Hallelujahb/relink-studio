@@ -39,6 +39,11 @@ function setAuthToken(token) {
   } catch { /* private browsing, etc. */ }
 }
 
+// Frontend build tag only -- stamped into downloaded configuration
+// packages (see buildConfigPackage) so a config file records which UI
+// version produced it. Not sent to, or checked against, the backend.
+const RELINK_VERSION = "0.9.0-preview";
+
 class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -127,25 +132,35 @@ const TOKENS_CSS = `
     --success: #22C55E; --success-soft: #12281A; --success-border: #3A7A57;
     --warning: #F59E0B; --warning-soft: #2E2411;
     --danger: #EF4444; --danger-soft: #341418; --danger-border: #93414D;
-    --method-a: #3B82F6; --method-b: #14B8A6; --method-c: #A78BFA; --method-d: #FB923C; --method-e: #818CF8;
+    --method-a: #3B82F6; --method-b: #14B8A6; --method-c: #A78BFA; --method-d: #FB923C; --method-e: #F43F5E;
+    --method-f: #EC4899; --method-g: #EAB308; --method-h: #06B6D4;
+    --success-track: var(--success); --warning-track: var(--warning); --primary-track: var(--primary);
     --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.25);
   }
   .rls[data-theme="light"] {
-    /* Softer than a stark cool-white: warmer, lower-contrast "paper" gray
-       instead of near-pure white surfaces on near-white background, plus
-       a warm off-black for text instead of near-pure black. Meaningfully
-       easier on the eyes for long review sessions. */
-    --bg: #EAE8E2; --surface: #F7F6F1; --surface-2: #EFEDE6; --surface-hover: #E4E2D9;
-    --border: #DCDACF; --border-strong: #C7C4B5;
-    --text: #33322C; --text-muted: #726F62;
-    --primary: #2563EB; --primary-hover: #1D4ED8; --primary-soft: #E3E9F9;
-    --success: #16A34A; --success-soft: #E7F3EA; --success-border: #7FA88E;
-    --warning: #B4620A; --warning-soft: #F7EEE0;
-    --danger: #C4331F; --danger-soft: #F6E7E3; --danger-border: #B98178;
-    --method-a: #2563EB; --method-b: #0D9488; --method-c: #7C3AED; --method-d: #B4620A; --method-e: #4338CA;
-    --shadow: 0 1px 2px rgba(40,35,20,0.05), 0 4px 10px rgba(40,35,20,0.05);
+    /* Flat near-white SaaS theme -- no gradients, no tinted bars. Every
+       surface (top bar, tab strip, bottom bar, cards) is the same
+       near-white, distinguished only by thin borders, with blue used
+       solely as the accent for selection/active/primary-action states. */
+    --bg: #F5F7FA; --surface: #FFFFFF; --surface-2: #F7F9FC; --surface-hover: #EEF2F7;
+    --border: #E3E8F0; --border-strong: #C9D3E0;
+    --text: #1A1D29; --text-muted: #667085;
+    --primary: #2F5FDB; --primary-hover: #2449AE; --primary-soft: #EAF1FE;
+    --success: #157F3D; --success-soft: #DEEEDF; --success-border: #6E9C79;
+    --warning: #B4620A; --warning-soft: #F1E4CE;
+    --danger: #B91C1C; --danger-soft: #F3DBD8; --danger-border: #B9847C;
+    --method-a: #2F5FDB; --method-b: #0D9488; --method-c: #9333EA; --method-d: #B4620A; --method-e: #DB2760;
+    --method-f: #C2185B; --method-g: #B7860B; --method-h: #0E7490;
+    --success-track: var(--success); --warning-track: var(--warning); --primary-track: var(--primary);
+    --shadow: 0 1px 2px rgba(20,30,60,0.05), 0 4px 10px rgba(20,30,60,0.06);
   }
   .rls { background: var(--bg); color: var(--text); }
+  .rls[data-theme="light"] .topbar-tint { background: var(--surface); }
+  .rls[data-theme="dark"] .topbar-tint { background: linear-gradient(100deg, #16213F 0%, #262244 50%, #3A2F52 100%); }
+  .rls[data-theme="light"] .chrome-bar { background: var(--surface); }
+  .rls[data-theme="dark"] .chrome-bar { background: linear-gradient(90deg, #161A24 0%, #1A1F2B 50%, #1E2433 100%); }
+  .rls[data-theme="dark"] .shape-active { background: var(--primary-soft); }
+  .rls[data-theme="light"] .shape-active { background: var(--primary-soft); }
   .surf { background: var(--surface); border-color: var(--border); }
   .surf2 { background: var(--surface-2); border-color: var(--border); }
   .muted { color: var(--text-muted); }
@@ -184,6 +199,24 @@ const TOKENS_CSS = `
   input, textarea, select { outline: none; }
   input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   input[type="number"] { -moz-appearance: textfield; }
+  /* Browsers default the unfilled portion of a range slider to a fixed
+     light gray track, which reads as a stray white bar in dark mode.
+     Naively setting the host <input>'s own "background" does nothing once
+     ::-webkit-slider-runnable-track is customized -- WebKit only paints
+     that pseudo-element's own background, the host's background is never
+     shown underneath it. Custom properties (unlike "background" itself)
+     DO inherit into pseudo-elements, so the per-slider fill gets passed
+     down as --track-fill and the pseudo-elements read it from there. */
+  input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 999px; background: transparent; outline: none; }
+  input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: var(--track-fill, var(--border)); }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; margin-top: -5px; background: var(--text); border: 2px solid var(--surface); cursor: pointer; }
+  input[type="range"]::-moz-range-track { height: 4px; border-radius: 999px; background: var(--track-fill, var(--border)); }
+  input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--text); border: 2px solid var(--surface); cursor: pointer; }
+  /* Light theme only: the thumb defaulting to --text (near-black) reads
+     as a stray black dot on these light bars, so give it the slider's
+     own accent color instead (falls back to --primary if none is set). */
+  .rls[data-theme="light"] input[type="range"]::-webkit-slider-thumb { background: var(--thumb-accent, var(--primary)); }
+  .rls[data-theme="light"] input[type="range"]::-moz-range-thumb { background: var(--thumb-accent, var(--primary)); }
   th { text-align: left; font-weight: 600; }
   .rls-grid-review { display: grid; grid-template-columns: 270px 1fr 350px; height: 100%; min-height: 0; }
   @media (max-width: 900px) {
@@ -301,6 +334,7 @@ function NumberStepper({ value, setValue, min = 0, max = 1, step = 0.01 }) {
 }
 
 function ThresholdSlider({ label, value, setValue, accent }) {
+  const pct = Math.round(value * 100);
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
@@ -310,7 +344,15 @@ function ThresholdSlider({ label, value, setValue, accent }) {
       <input
         type="range" min="0" max="1" step="0.01" value={value}
         onChange={(e) => setValue(parseFloat(e.target.value))}
-        className="w-full" style={{ accentColor: accent }}
+        className="w-full"
+        style={{
+          accentColor: accent,
+          // See the CSS comment above: this has to travel as a custom
+          // property, not a literal `background`, or WebKit silently
+          // drops it once the track pseudo-element is customized.
+          "--track-fill": `linear-gradient(to right, ${accent} 0%, ${accent} ${pct}%, var(--border) ${pct}%, var(--border) 100%)`,
+          "--thumb-accent": accent,
+        }}
       />
     </div>
   );
@@ -412,10 +454,10 @@ function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChe
   );
 }
 
-function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged, connection }) {
+function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged, connection, fastMode, setFastMode }) {
   return (
     <div style={{ position: "sticky", top: 0, zIndex: 30, flexShrink: 0 }}>
-      <div className="surf border-b flex items-center justify-between px-5 py-3">
+      <div className="topbar-tint b border-b flex items-center justify-between px-5 py-2">
         <div className="flex items-center gap-3">
           <Logo />
           <span className="font-semibold text-sm tracking-tight">ReLink Studio</span>
@@ -440,6 +482,13 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
             <input type="file" accept=".json" onChange={onUploadConfig} className="hidden" />
           </label>
           <button onClick={onDownloadConfig} className="btn btn-ghost text-xs font-medium px-3 py-1.5">Download config</button>
+          <label
+            className="text-xs muted flex items-center gap-1.5 cursor-pointer"
+            title="After the pipeline finishes, auto-approve rows with full method agreement at or above your auto-approve threshold, then drop you straight onto the short needs-attention list instead of the full checklist."
+          >
+            <input type="checkbox" checked={fastMode} onChange={(e) => setFastMode(e.target.checked)} />
+            Fast mode
+          </label>
           <button
             onClick={onExecutePipeline}
             disabled={isRunning || !canRun}
@@ -451,14 +500,15 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
           </button>
         </div>
       </div>
-      <div className="surf border-b flex items-center px-5 py-2.5 gap-2 overflow-x-auto">
+      <div className="surf chrome-bar border-b flex items-center px-5 py-1.5 gap-2 overflow-x-auto">
         {TAB_LABELS.map((label, i) => {
-          // The export tab produces the authoritative CSV, which only
-          // makes sense once review decisions are merged & finalized --
-          // jumping straight there before that would let you download a
-          // partial/undecided set. Everything else stays freely navigable.
+          // The export tab produces the authoritative CSV, which only makes
+          // sense once review decisions are merged & finalized -- but rather
+          // than making the tab itself inert beforehand, it's left clickable
+          // and shows its own "Not ready to export yet" screen instead (see
+          // TabExportAudit), so you can always get in to see why.
           const isExportTab = i === TAB_LABELS.length - 1;
-          const locked = isExportTab && !merged;
+          const locked = false;
           return (
             <div key={label} className="flex items-center gap-2">
               <div
@@ -494,12 +544,12 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
   // scrollable tab content (see the root layout below) so it never moves.
   return (
     <div
-      className="surf border-t b flex items-center justify-between px-5 py-3"
+      className="surf chrome-bar border-t b flex items-center justify-between px-5 py-1.5"
       style={{ flexShrink: 0, position: "sticky", bottom: 0, zIndex: 30 }}
     >
       <div>
         {!isFirst && (
-          <button onClick={() => setActiveTab(activeTab - 1)} className="btn btn-ghost text-sm font-medium px-4 py-2">
+          <button onClick={() => setActiveTab(activeTab - 1)} className="btn btn-ghost text-sm font-medium px-3.5 py-1.5">
             &larr; Back
           </button>
         )}
@@ -512,7 +562,7 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
           <button
             onClick={() => { if (canContinue) (onContinue ? onContinue() : setActiveTab(activeTab + 1)); }}
             disabled={!canContinue}
-            className="btn btn-primary text-sm font-medium px-4 py-2"
+            className="btn btn-primary text-sm font-medium px-3.5 py-1.5"
             style={!canContinue ? { opacity: 0.45, cursor: "not-allowed" } : {}}
             title={!canContinue ? blockedReason : undefined}
           >
@@ -527,6 +577,28 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
 /* ---------------------------------------------------------------------- */
 /* File parsing (real, used by Tab 1)                                    */
 /* ---------------------------------------------------------------------- */
+
+// A quick, honest heuristic, not a guarantee: scans header names for the
+// obvious conventions ("id", "source_id", "facility_name"...) so a lazy
+// person doesn't start from two blank dropdowns every single time. Always
+// overridable, never silently trusted for anything downstream.
+function guessIdColumn(columns) {
+  if (!columns || !columns.length) return "";
+  const lower = columns.map((c) => String(c).toLowerCase());
+  const exact = lower.indexOf("id");
+  if (exact !== -1) return columns[exact];
+  const idLike = lower.findIndex((c) => /(^|_)id($|_)/.test(c));
+  if (idLike !== -1) return columns[idLike];
+  return columns[0];
+}
+function guessMatchColumn(columns, idGuess) {
+  if (!columns || !columns.length) return "";
+  const lower = columns.map((c) => String(c).toLowerCase());
+  const nameLike = lower.findIndex((c, i) => columns[i] !== idGuess && /name|facility|label|title/.test(c));
+  if (nameLike !== -1) return columns[nameLike];
+  const fallback = columns.find((c) => c !== idGuess);
+  return fallback || columns[0];
+}
 
 function parseUploadedFile(file, onParsed, onError) {
   const ext = file.name.split(".").pop().toLowerCase();
@@ -818,8 +890,9 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
       f,
       async (parsed) => {
         setFile({ name: f.name, format: parsed.format, rowCount: parsed.rowCount, columns: parsed.columns, geometry: parsed.geometry, geometryRows: parsed.rows || null, fileId: null, uploadError: null });
-        setIdColumn(parsed.columns[0] || "");
-        setMatchColumn(parsed.columns[1] || parsed.columns[0] || "");
+        const guessedId = guessIdColumn(parsed.columns);
+        setIdColumn(guessedId);
+        setMatchColumn(guessMatchColumn(parsed.columns, guessedId));
         setHierarchy([]);
 
         // Server-side upload: this is what actually gets a file_id the
@@ -924,8 +997,9 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
             setToast={setToast}
             onIngested={(res) => {
               setFile({ name: res.filename, format: res.format, rowCount: res.row_count, columns: res.columns, geometry: null, geometryRows: null, fileId: res.file_id, uploadError: null });
-              setIdColumn(res.columns[0] || "");
-              setMatchColumn(res.columns[1] || res.columns[0] || "");
+              const guessedId = guessIdColumn(res.columns);
+              setIdColumn(guessedId);
+              setMatchColumn(guessMatchColumn(res.columns, guessedId));
               setHierarchy([]);
               setMode("upload");
             }}
@@ -1014,8 +1088,8 @@ function ShapeOption({ label, description, active, onClick, diagram }) {
   return (
     <button
       onClick={onClick}
-      className="card border p-3.5 flex flex-col gap-3 text-left flex-1 transition-all"
-      style={active ? { background: "var(--primary-soft)", borderColor: "var(--primary)" } : { background: "var(--surface-2)", borderColor: "var(--border)" }}
+      className={`card border p-3.5 flex flex-col gap-3 text-left flex-1 transition-all${active ? " shape-active" : ""}`}
+      style={active ? { borderColor: "var(--primary)" } : { background: "var(--surface-2)", borderColor: "var(--border)" }}
     >
       <div>
         <div className="text-sm font-semibold" style={active ? { color: "var(--primary)" } : {}}>{label}</div>
@@ -1026,6 +1100,14 @@ function ShapeOption({ label, description, active, onClick, diagram }) {
   );
 }
 
+function makeEmptyStep(index) {
+  return {
+    id: `step_${Date.now()}_${index}`,
+    file: { name: "No file selected", format: "-", rowCount: 0, columns: ["(upload a file to see columns)"], geometry: null, geometryRows: null, fileId: null, uploadError: null },
+    idCol: "", matchCol: "", hierarchy: [],
+  };
+}
+
 function TabSourcesShape(props) {
   const {
     sourceFile, setSourceFile, sourceIdCol, setSourceIdCol, sourceMatchCol, setSourceMatchCol, sourceHierarchy, setSourceHierarchy,
@@ -1033,11 +1115,22 @@ function TabSourcesShape(props) {
     shape, setShape, chainSteps, setChainSteps, setToast, setActiveTab,
   } = props;
 
+  function addStep() {
+    setChainSteps([...chainSteps, makeEmptyStep(chainSteps.length)]);
+  }
+  function removeStep(id) {
+    setChainSteps(chainSteps.filter((s) => s.id !== id));
+    setToast("Step removed.");
+  }
+  function updateStep(id, patch) {
+    setChainSteps(chainSteps.map((s) => (s.id === id ? { ...s, ...(typeof patch === "function" ? patch(s) : patch) } : s)));
+  }
+
   return (
     <div className="p-5 max-w-5xl mx-auto flex flex-col gap-4">
       {(sourceFile.name === "No source file selected" || targetFile.name === "No target file selected") && (
         <div className="card surf2 border p-3 text-xs muted">
-          Upload a source file and a target file below to get started, CSV, Excel, or GeoJSON both work. Everything happens locally in this browser: files are parsed and matched on your machine, nothing is uploaded to a server, and there's no separate path or config file to set up.
+          Upload a source file and a target file below to get started, CSV, Excel, or GeoJSON both work. Files are parsed locally for the preview you see here, and also uploaded to the backend to actually run the matching pipeline.
         </div>
       )}
 
@@ -1065,27 +1158,38 @@ function TabSourcesShape(props) {
         </div>
 
         {shape !== "single" && (
-          <div className="mt-4 flex flex-col gap-2">
+          <div className="mt-4 flex flex-col gap-3">
             <div className="text-xs font-semibold muted uppercase tracking-wide">{shape === "chained" ? "Chain steps" : "Spokes"}</div>
             <div className="surf2 border b rounded-md px-3.5 py-2.5 flex items-center justify-between">
               <span className="text-xs font-semibold muted">STEP 1 (base)</span>
-              <span className="text-sm">{targetFile.name} (base level)</span>
+              <span className="text-sm">{targetFile.name} (base level, from the Target card above)</span>
             </div>
-            {chainSteps.map((s, i) => (
-              <div key={s} className="surf2 border b rounded-md px-3.5 py-2.5 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-semibold muted">STEP {i + 2}</span>
-                  <span className="text-sm">{s}</span>
+            <div className="flex gap-4 flex-wrap">
+              {chainSteps.map((step, i) => (
+                <div key={step.id} style={{ minWidth: 280, flex: "1 1 280px" }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold muted">
+                      STEP {i + 2}{shape === "chained" ? `, matches against Step ${i + 1}'s result` : ", matches against the original Source"}
+                    </span>
+                    <button onClick={() => removeStep(step.id)} className="btn text-xs font-medium px-2 py-1" style={{ color: "var(--danger)" }}>Remove</button>
+                  </div>
+                  <FilePickerCard
+                    role={shape === "chained" ? `Step ${i + 2} target` : `Spoke ${i + 2}`}
+                    file={step.file} setFile={(f) => updateStep(step.id, (s) => ({ file: typeof f === "function" ? f(s.file) : f }))}
+                    columns={step.file.columns} idColumn={step.idCol} setIdColumn={(v) => updateStep(step.id, { idCol: v })}
+                    matchColumn={step.matchCol} setMatchColumn={(v) => updateStep(step.id, { matchCol: v })}
+                    hierarchy={step.hierarchy} setHierarchy={(v) => updateStep(step.id, (s) => ({ hierarchy: typeof v === "function" ? v(s.hierarchy) : v }))}
+                    setToast={setToast}
+                  />
                 </div>
-                <button onClick={() => { setChainSteps(chainSteps.filter((x) => x !== s)); setToast("Step removed."); }} className="btn text-xs font-medium px-2 py-1" style={{ color: "var(--danger)" }}>Remove</button>
-              </div>
-            ))}
-            <button
-              onClick={() => { setChainSteps([...chainSteps, `new target file (${shape === "chained" ? "chained" : "spoke"} ${chainSteps.length + 2})`]); setToast("New step added."); }}
-              className="btn btn-ghost text-sm font-medium px-3 py-2 self-start"
-            >
+              ))}
+            </div>
+            <button onClick={addStep} className="btn btn-ghost text-sm font-medium px-3 py-2 self-start">
               + Add {shape === "chained" ? "chain step" : "spoke"}
             </button>
+            <div className="text-xs muted px-1">
+              This captures the full multi-step shape and sends it to the backend, but the matching engine itself only executes one step at a time so far, each step here still needs its own file uploaded and columns picked, same as Source and Target above.
+            </div>
           </div>
         )}
       </div>
@@ -1097,9 +1201,15 @@ function TabSourcesShape(props) {
 /* Tab 2: Hierarchy & methods                                            */
 /* ---------------------------------------------------------------------- */
 
-function MethodCard({ name, engine, description, warning, enabled, onToggle, accent }) {
+function MethodCard({ name, engine, description, warning, enabled, onToggle, accent, footer }) {
   return (
-    <div className="card border p-4" style={{ background: enabled ? `${accent}10` : "var(--surface-2)", borderColor: enabled ? accent : "var(--border)" }}>
+    <div
+      className="card border p-4"
+      style={{
+        background: enabled ? `color-mix(in srgb, ${accent} 16%, transparent)` : "color-mix(in srgb, var(--surface-2) 55%, transparent)",
+        borderColor: enabled ? accent : "var(--border)",
+      }}
+    >
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2.5">
           <span className="w-2.5 h-2.5 rounded-full" style={{ background: accent }} />
@@ -1116,6 +1226,97 @@ function MethodCard({ name, engine, description, warning, enabled, onToggle, acc
           {warning}
         </div>
       )}
+      {footer}
+    </div>
+  );
+}
+
+function AddMethodCard({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="card p-4 flex flex-col items-center justify-center gap-2 text-center"
+      style={{ border: "1.5px dashed var(--border)", background: "transparent", minHeight: "132px" }}
+    >
+      <span className="text-xl muted">+</span>
+      <div className="text-sm font-medium">Add your method</div>
+      <div className="text-xs muted">Point at your own Python scoring script</div>
+    </button>
+  );
+}
+
+const METHOD_COLOR_CHOICES = [
+  { key: "a", var: "var(--method-a)" }, { key: "b", var: "var(--method-b)" }, { key: "c", var: "var(--method-c)" },
+  { key: "d", var: "var(--method-d)" }, { key: "e", var: "var(--method-e)" }, { key: "f", var: "var(--method-f)" },
+  { key: "g", var: "var(--method-g)" }, { key: "h", var: "var(--method-h)" },
+];
+
+function AddMethodModal({ onClose, onSave, takenColors }) {
+  const [name, setName] = useState("");
+  const [path, setPath] = useState("");
+  const [entryFunction, setEntryFunction] = useState("score");
+  const [description, setDescription] = useState("");
+  // Same color "vibe" as the built-in methods, not a generic gray -- and
+  // default to whichever one nothing else is currently using yet, so two
+  // methods don't accidentally look identical at a glance.
+  const firstFree = METHOD_COLOR_CHOICES.find((c) => !takenColors.includes(c.var)) || METHOD_COLOR_CHOICES[0];
+  const [color, setColor] = useState(firstFree.var);
+  const canSave = name.trim() && path.trim();
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.5)", zIndex: 60 }} onClick={onClose}>
+      <div className="card surf border p-5" style={{ width: "440px", maxWidth: "90vw" }} onClick={(e) => e.stopPropagation()}>
+        <div className="text-sm font-semibold mb-3">Add your method</div>
+        <div className="flex flex-col gap-3">
+          <div>
+            <div className="text-xs muted mb-1">Method name</div>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. MyResolver" className="w-full surf2 border b rounded-md text-sm px-3 py-2" style={{ color: "var(--text)" }} />
+          </div>
+          <div>
+            <div className="text-xs muted mb-1">Color</div>
+            <div className="flex items-center gap-2">
+              {METHOD_COLOR_CHOICES.map((c) => (
+                <button
+                  key={c.key} onClick={() => setColor(c.var)} title={takenColors.includes(c.var) ? "Already used by another method" : ""}
+                  className="rounded-full flex-shrink-0"
+                  style={{
+                    width: "22px", height: "22px", background: c.var,
+                    border: color === c.var ? "2px solid var(--text)" : "2px solid transparent",
+                    boxShadow: color === c.var ? "0 0 0 2px var(--surface)" : "none",
+                    opacity: takenColors.includes(c.var) && color !== c.var ? 0.35 : 1,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs muted mb-1">Path to your Python file</div>
+            <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/methods/my_resolver.py" className="w-full surf2 border b rounded-md text-sm px-3 py-2 font-mono" style={{ color: "var(--text)" }} />
+          </div>
+          <div>
+            <div className="text-xs muted mb-1">Entry function (must accept source/candidate rows + params, return scores)</div>
+            <input value={entryFunction} onChange={(e) => setEntryFunction(e.target.value)} className="w-full surf2 border b rounded-md text-sm px-3 py-2 font-mono" style={{ color: "var(--text)" }} />
+          </div>
+          <div>
+            <div className="text-xs muted mb-1">Description (optional)</div>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="w-full surf2 border b rounded-md text-sm px-3 py-2" style={{ color: "var(--text)" }} />
+          </div>
+          <div className="text-xs muted">
+            Not executed yet: the backend does not load or run custom scripts. This entry is stored in your configuration package (path only, never the script contents) so it can be reviewed and wired up deliberately later.
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="btn btn-ghost text-sm font-medium px-3 py-1.5">Cancel</button>
+          <button
+            onClick={() => canSave && onSave({ name: name.trim(), path: path.trim(), entryFunction: entryFunction.trim() || "score", description: description.trim(), color })}
+            disabled={!canSave}
+            className="btn btn-primary text-sm font-medium px-3 py-1.5"
+            style={!canSave ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+          >
+            Add method
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1126,12 +1327,56 @@ function TabHierarchyMethods(props) {
     methodA, setMethodA, methodB, setMethodB, methodC, setMethodC, methodD, setMethodD, methodE, setMethodE,
     blockingFloor, setBlockingFloor, keepDigits, setKeepDigits, stripParens, setStripParens,
     stripSuffixWords, setStripSuffixWords, caseSensitive, setCaseSensitive, setActiveTab,
+    sourceFile, targetFile, setToast, customMethods, setCustomMethods,
   } = props;
+  const [addMethodOpen, setAddMethodOpen] = useState(false);
+
+  function addCustomMethod(m) {
+    setCustomMethods([...customMethods, { id: `custom_${Date.now()}`, version: 1, enabled: true, ...m }]);
+    setAddMethodOpen(false);
+    setToast(`Added "${m.name}". Saved to your config package only; the backend does not run custom scripts.`);
+  }
+  function toggleCustomMethod(id) {
+    setCustomMethods(customMethods.map((m) => (m.id === id ? { ...m, enabled: !m.enabled } : m)));
+  }
+  function removeCustomMethod(id, name) {
+    setCustomMethods(customMethods.filter((m) => m.id !== id));
+    setToast(`Removed "${name}".`);
+  }
 
   const chain = sourceHierarchy.length ? [...sourceHierarchy, "Match column"] : ["Level 1", "Level 2", "Level 3"];
+  const maxRows = Math.max(sourceFile.rowCount || 0, targetFile.rowCount || 0);
+  const bothHaveGeometry = !!(sourceFile.geometry && targetFile.geometry);
+
+  function applyRecommended() {
+    setMethodA(true);
+    setMethodB(true);
+    setMethodC(false);
+    setMethodD(bothHaveGeometry);
+    setMethodE(maxRows >= 10000);
+    setAutoApprove(0.95);
+    setNeedsReview(0.80);
+    setBlockingFloor(0.60);
+    setKeepDigits(true);
+    setStripParens(true);
+    setCaseSensitive(false);
+    setToast(
+      maxRows >= 10000
+        ? `Applied recommended settings, including Splink since you're linking ${maxRows.toLocaleString()} rows.`
+        : "Applied recommended settings for a run this size."
+    );
+  }
 
   return (
     <div className="p-5 max-w-5xl mx-auto flex flex-col gap-4">
+      <div className="card surf2 border p-3.5 flex items-center justify-between gap-3">
+        <div className="text-xs muted">
+          Based on your files: {maxRows > 0 ? `${maxRows.toLocaleString()} rows, ` : ""}{bothHaveGeometry ? "geometry on both sides" : "no geometry on one or both sides"}.
+          {maxRows >= 10000 && " Recommended settings would turn on Splink for a run this size."}
+        </div>
+        <button onClick={applyRecommended} className="btn btn-primary text-xs font-medium px-3 py-1.5 flex-shrink-0">Use recommended settings</button>
+      </div>
+
       <div className="card surf border p-4">
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Hierarchy chain</div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1151,8 +1396,8 @@ function TabHierarchyMethods(props) {
       <div className="card surf border p-4">
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Confidence thresholds</div>
         <div className="grid grid-cols-2 gap-6">
-          <ThresholdSlider label="Auto-approve at" value={autoApprove} setValue={setAutoApprove} accent="var(--success)" />
-          <ThresholdSlider label="Needs-review floor" value={needsReview} setValue={setNeedsReview} accent="var(--warning)" />
+          <ThresholdSlider label="Auto-approve at" value={autoApprove} setValue={setAutoApprove} accent="var(--success-track)" />
+          <ThresholdSlider label="Needs-review floor" value={needsReview} setValue={setNeedsReview} accent="var(--warning-track)" />
         </div>
         {needsReview >= autoApprove && (
           <div className="mt-3 text-xs px-2.5 py-2 rounded-md" style={{ background: "var(--danger-soft)", color: "var(--danger)" }}>
@@ -1164,7 +1409,7 @@ function TabHierarchyMethods(props) {
       <div className="card surf border p-4">
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Advanced matching settings</div>
         <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-          <ThresholdSlider label="Hierarchy blocking floor" value={blockingFloor} setValue={setBlockingFloor} accent="var(--primary)" />
+          <ThresholdSlider label="Hierarchy blocking floor" value={blockingFloor} setValue={setBlockingFloor} accent="var(--primary-track)" />
           <div className="flex flex-col gap-2.5 justify-center">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -1215,8 +1460,8 @@ function TabHierarchyMethods(props) {
             enabled={methodB} onToggle={() => setMethodB(!methodB)}
           />
           <MethodCard
-            name={METHOD_META.C.label} engine="linktransformer (embeddings)" accent={METHOD_META.C.accent}
-            description="Semantic matching, good for meaning gaps rather than spelling gaps."
+            name={METHOD_META.C.label} engine="local sentence-embedding model" accent={METHOD_META.C.accent}
+            description="Semantic matching via a local sentence-transformers model, good for meaning gaps rather than spelling gaps. Needs the optional backend package (pip install -r relink-api/requirements-embedding.txt); the first run downloads the model once unless RELINK_EMBEDDING_MODEL points at a local folder."
             warning="Weak on close spelling variants. Can repeatedly collapse distinct records onto the same wrong neighbor. Recommended as a secondary signal, not primary."
             enabled={methodC} onToggle={() => setMethodC(!methodC)}
           />
@@ -1230,8 +1475,31 @@ function TabHierarchyMethods(props) {
             description="Learns how much weight each field should carry from your data instead of using a fixed similarity score. Worth it once you're linking tens of thousands of rows or more; for smaller runs, the methods above are simpler and just as effective."
             enabled={methodE} onToggle={() => setMethodE(!methodE)}
           />
+          {customMethods.map((m) => (
+            <MethodCard
+              key={m.id}
+              name={m.name} engine={`your script, v${m.version}`} accent={m.color || "var(--method-a)"}
+              description={m.description || "Custom method, no description given."}
+              warning="Saved in the config package only. The backend does not run custom scripts, so this has no effect on matching results."
+              enabled={m.enabled} onToggle={() => toggleCustomMethod(m.id)}
+              footer={
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <span className="text-xs muted font-mono truncate" title={m.path}>{m.path}</span>
+                  <button onClick={() => removeCustomMethod(m.id, m.name)} className="text-xs flex-shrink-0" style={{ color: "var(--danger)" }}>Remove</button>
+                </div>
+              }
+            />
+          ))}
+          <AddMethodCard onClick={() => setAddMethodOpen(true)} />
         </div>
       </div>
+      {addMethodOpen && (
+        <AddMethodModal
+          onClose={() => setAddMethodOpen(false)}
+          onSave={addCustomMethod}
+          takenColors={["var(--method-a)", "var(--method-b)", "var(--method-c)", "var(--method-d)", "var(--method-e)", ...customMethods.map((m) => m.color)]}
+        />
+      )}
     </div>
   );
 }
@@ -1259,8 +1527,33 @@ function TabSafetyRules(props) {
     }
   }, [excludePattern]);
 
+  const SAFETY_PRESETS = {
+    strict: { collisionGuard: true, allowManyToOne: false, autoDowngradeTies: true, requireHierarchyMatch: true, strictZoneMatch: true, flagLowCoverageZones: true },
+    balanced: { collisionGuard: true, allowManyToOne: false, autoDowngradeTies: true, requireHierarchyMatch: true, strictZoneMatch: false, flagLowCoverageZones: true },
+    loose: { collisionGuard: false, allowManyToOne: true, autoDowngradeTies: false, requireHierarchyMatch: false, strictZoneMatch: false, flagLowCoverageZones: false },
+  };
+  function applySafetyPreset(name) {
+    const p = SAFETY_PRESETS[name];
+    setCollisionGuard(p.collisionGuard);
+    setAllowManyToOne(p.allowManyToOne);
+    setAutoDowngradeTies(p.autoDowngradeTies);
+    setRequireHierarchyMatch(p.requireHierarchyMatch);
+    setStrictZoneMatch(p.strictZoneMatch);
+    setFlagLowCoverageZones(p.flagLowCoverageZones);
+  }
+
   return (
     <div className="p-5 max-w-5xl mx-auto flex flex-col gap-4">
+      <div className="card surf border p-4">
+        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Quick preset</div>
+        <div className="flex gap-3">
+          <ShapeOption label="Strict" description="Every safeguard on. Slower to reach full coverage, fewest false positives." active={false} onClick={() => applySafetyPreset("strict")} diagram="most caution" />
+          <ShapeOption label="Balanced" description="A sensible default: collision guard and hierarchy checks on, exact zone matching off." active={false} onClick={() => applySafetyPreset("balanced")} diagram="the defaults below" />
+          <ShapeOption label="Loose" description="Minimal friction, trusts the name match more than the surrounding rules. More coverage, more to double-check." active={false} onClick={() => applySafetyPreset("loose")} diagram="least caution" />
+        </div>
+        <div className="text-xs muted mt-3">Just sets the toggles below to a starting combination, feel free to fine-tune any of them afterward.</div>
+      </div>
+
       <div className="card surf border p-4">
         <div className="flex items-start justify-between">
           <div className="flex-1">
@@ -1516,7 +1809,7 @@ const PAGE_SIZE = 50;
 const METHOD_META = {
   A: { key: "A", label: "Fuzzy match", shortLabel: "Fuzzy", engine: "difflib", accent: "var(--method-a)" },
   B: { key: "B", label: "Token overlap", shortLabel: "Token overlap", engine: "recordlinkage approx.", accent: "var(--method-b)" },
-  C: { key: "C", label: "Semantic embedding", shortLabel: "Semantic", engine: "linktransformer", accent: "var(--method-c)" },
+  C: { key: "C", label: "Semantic embedding", shortLabel: "Semantic", engine: "local sentence-embedding model", accent: "var(--method-c)" },
   D: { key: "D", label: "Geometry check", shortLabel: "Geometry", engine: "geometry corroboration", accent: "var(--method-d)" },
   E: { key: "E", label: "Probabilistic (Splink)", shortLabel: "Probabilistic", engine: "Fellegi-Sunter", accent: "var(--method-e)" },
 };
@@ -1697,7 +1990,7 @@ function TabReviewQueue(props) {
           </div>
           <div className="flex-1 overflow-y-auto">
             {pagedRows.map((r) => (
-              <div key={r.sourceId} onClick={() => setSelectedId(r.sourceId)} className={`cursor-pointer px-3.5 py-3 border-b b ${r.approved ? "approvedGlow" : ""}`} style={r.sourceId === selectedId ? { background: "var(--primary-soft)" } : {}}>
+              <div key={r.sourceId} onClick={() => setSelectedId(r.sourceId)} className="cursor-pointer px-3.5 py-3 border-b b" style={r.sourceId === selectedId ? { background: "var(--primary-soft)" } : {}}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs muted font-mono">#{r.sourceId}</span>
                   <div className="flex items-center gap-1.5">
@@ -1832,7 +2125,8 @@ function TabReviewQueue(props) {
 function TabApproveFinalize(props) {
   const {
     rows, setToast, patchReviewRow, bulkReview, undoReview,
-    pendingDecisions, setPendingDecisions, merged, setMerged, finalRows, setActiveTab,
+    pendingDecisions, setPendingDecisions, merged, setMerged, finalRows, setActiveTab, autoApprove,
+    saveEvalSet, setEvalSet,
   } = props;
   const [statusFilter, setStatusFilter] = useState("undecided");
   // A row that just got decided is held in view briefly so its green/red
@@ -1887,17 +2181,32 @@ function TabApproveFinalize(props) {
     timersRef.current.push(t1, t2);
   }
 
+  function logEvalDecision(r, decision, best) {
+    if (!saveEvalSet) return;
+    setEvalSet((prev) => [
+      ...prev,
+      {
+        source_id: r.sourceId, source_name: r.sourceName,
+        target_id: best.targetId, target_name: best.name,
+        decision, notes: "",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+  }
+
   function approveRow(r) {
     const best = bestCandidate(r, candidateKeys);
     patchReviewRow(r.sourceId, { chosen_method: r.chosenMethod || best.key, approved: true });
     setPendingDecisions((prev) => ({ ...prev, [r.sourceId]: "approved" }));
     animateOut(r.sourceId, "approved");
+    logEvalDecision(r, "approve", best);
   }
 
   function rejectRow(r) {
     patchReviewRow(r.sourceId, { approved: false, chosen_method: null });
     setPendingDecisions((prev) => ({ ...prev, [r.sourceId]: "rejected" }));
     animateOut(r.sourceId, "rejected");
+    logEvalDecision(r, "reject", bestCandidate(r, candidateKeys));
   }
 
   async function approveAllConsensus() {
@@ -1947,6 +2256,71 @@ function TabApproveFinalize(props) {
       return next;
     });
     setToast(`Approved ${targets.length} remaining row(s) using each row's best available candidate.`);
+  }
+
+  // ---- Bulk triage: the lazy-but-reasonable path ------------------------
+  // "Safe to bulk" mirrors approveAllConsensus's own definition of consensus
+  // (>=2 methods agreeing on the same target, not a collision) so the two
+  // don't quietly disagree with each other. Everything undecided that isn't
+  // safe becomes "needs you", grouped by kind so a whole category can be
+  // signed off in one tap instead of row by row.
+  function isSafeToBulk(r) {
+    const candidates = Object.values(r.methods).filter((m) => m.targetId !== null);
+    const uniqueTargets = new Set(candidates.map((m) => m.targetId));
+    return candidates.length >= 2 && uniqueTargets.size === 1 && r.kind !== "collision";
+  }
+  const undecidedRows = useMemo(() => rows.filter((r) => !isDecided(r)), [rows, pendingDecisions]);
+  const safeRows = useMemo(() => undecidedRows.filter(isSafeToBulk), [undecidedRows]);
+  const needsYouByKind = useMemo(() => {
+    const groups = {};
+    undecidedRows.forEach((r) => {
+      if (isSafeToBulk(r)) return;
+      const k = r.kind || "unmatched";
+      (groups[k] = groups[k] || []).push(r);
+    });
+    return Object.entries(groups)
+      .map(([kind, list]) => {
+        const scores = list.map((r) => bestCandidate(r, candidateKeys).score).filter((s) => s !== null);
+        const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+        return { kind, rows: list, avg };
+      })
+      .sort((a, b) => b.rows.length - a.rows.length);
+  }, [undecidedRows, candidateKeys]);
+
+  // Local only -- seeded from the Hierarchy & methods setting so it starts
+  // somewhere sensible, but dragging it here is a one-off for this action
+  // and never writes back to that saved setting.
+  const [thresholdPct, setThresholdPct] = useState(() => Math.round((autoApprove ?? 0.9) * 100));
+  const thresholdMatches = useMemo(
+    () => undecidedRows.filter((r) => {
+      const s = bestCandidate(r, candidateKeys).score;
+      return s !== null && s * 100 >= thresholdPct;
+    }),
+    [undecidedRows, thresholdPct, candidateKeys]
+  );
+  // Collapsed by default -- it's genuinely useful but tall once open, and
+  // shouldn't eat the vertical space every single row list has to fit in
+  // before anyone's actually asked for it.
+  const [triageOpen, setTriageOpen] = useState(false);
+
+  async function approveByIds(ids, message) {
+    if (ids.length === 0) { setToast("Nothing to approve there."); return; }
+    const undoToken = await bulkReview("approve", ids);
+    setPendingDecisions((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => { next[id] = "approved"; });
+      return next;
+    });
+    setToast({ message, undo: undoToken ? () => { undoReview(undoToken); setToast("Undone."); } : undefined });
+  }
+  function approveByThreshold() {
+    approveByIds(thresholdMatches.map((r) => r.sourceId), `Approved ${thresholdMatches.length} row(s) scoring ${thresholdPct}% or above.`);
+  }
+  function signOffKind(kind, list) {
+    approveByIds(list.map((r) => r.sourceId), `Signed off all ${list.length} ${(KIND_META[kind] && KIND_META[kind].label) || kind} row(s).`);
+  }
+  function approveAllSafe() {
+    approveByIds(safeRows.map((r) => r.sourceId), `Approved ${safeRows.length} row(s) with full method agreement, nothing to review there.`);
   }
 
   async function mergeAndFinalize() {
@@ -2016,7 +2390,7 @@ function TabApproveFinalize(props) {
 
   return (
     <div className="flex flex-col" style={{ height: "100%" }}>
-      <div className="flex items-center justify-between px-5 py-3 border-b b">
+      <div className="flex items-center justify-between px-5 py-2 border-b b">
         <div>
           <div className="text-sm font-semibold">Pending approvals</div>
           <div className="text-xs muted">{undecidedCount} undecided, {statusCounts.approved} approved, {statusCounts.rejected} rejected</div>
@@ -2032,6 +2406,74 @@ function TabApproveFinalize(props) {
           )}
         </div>
       </div>
+
+      {statusFilter === "undecided" && undecidedCount > 0 && (
+        <div className="border-b b px-5 py-1.5" style={{ flexShrink: 0 }}>
+          <button onClick={() => setTriageOpen(!triageOpen)} className="text-xs font-semibold muted uppercase tracking-wide">
+            Bulk actions {triageOpen ? "\u25BE" : "\u25B8"}
+          </button>
+          {triageOpen && (
+            <div className="mt-3 flex flex-col gap-2.5">
+              <div className="flex gap-2.5 items-stretch flex-wrap">
+                <div className="card surf2 border p-3.5" style={{ flex: "1 1 320px" }}>
+                  <div className="text-sm font-medium mb-0.5">Approve everything at or above a score</div>
+                  <div className="text-xs muted mb-2">starts from your Hierarchy &amp; methods threshold, dragging here won't change that setting</div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range" min="0" max="100" value={thresholdPct} onChange={(e) => setThresholdPct(Number(e.target.value))}
+                      style={{ flex: 1, accentColor: "var(--primary)", "--track-fill": `linear-gradient(to right, var(--primary) 0%, var(--primary) ${thresholdPct}%, var(--border) ${thresholdPct}%, var(--border) 100%)` }}
+                    />
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <input
+                        type="number" min="0" max="100" value={thresholdPct}
+                        onChange={(e) => setThresholdPct(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                        className="surf2 border b rounded-md text-sm font-semibold text-right px-2 py-1"
+                        style={{ width: "56px" }}
+                      />
+                      <span className="text-sm font-semibold">%</span>
+                    </div>
+                    <button
+                      onClick={approveByThreshold}
+                      disabled={thresholdMatches.length === 0}
+                      className="btn btn-success text-xs font-medium px-3 py-1.5 flex-shrink-0"
+                      style={thresholdMatches.length === 0 ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+                    >
+                      Approve {thresholdMatches.length} row(s)
+                    </button>
+                  </div>
+                </div>
+
+                {safeRows.length > 0 && (
+                  <div className="card border p-3.5 flex flex-col justify-between gap-2" style={{ flex: "1 1 260px", borderColor: "var(--success-border)", background: "var(--success-soft)" }}>
+                    <div>
+                      <div className="text-sm font-medium">Safe to bulk-approve: {safeRows.length} row(s)</div>
+                      <div className="text-xs muted mt-0.5">Heuristic, not a judgment call: full agreement across every method that returned a candidate, not a collision.</div>
+                    </div>
+                    <button onClick={approveAllSafe} className="btn btn-success text-xs font-medium px-3 py-1.5 self-start">Approve all {safeRows.length}</button>
+                  </div>
+                )}
+              </div>
+
+              {needsYouByKind.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold muted uppercase tracking-wide mb-2">Needs a look, by category</div>
+                  <div className="flex flex-col gap-2">
+                    {needsYouByKind.map(({ kind, rows: list, avg }) => (
+                      <div key={kind} className="card border p-3 flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-2.5">
+                          <KindBadge kind={kind} />
+                          <span className="text-sm">{list.length} row(s){avg !== null ? `, avg score ${(avg * 100).toFixed(0)}%` : ""}</span>
+                        </div>
+                        <button onClick={() => signOffKind(kind, list)} className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex-shrink-0">Sign off all {list.length}</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 340px" }}>
         <div className="overflow-y-auto p-5 flex flex-col gap-3" style={{ maxWidth: "920px" }}>
@@ -2140,7 +2582,7 @@ function CoverageBar({ label, value, total, color }) {
 }
 
 function TabExportAudit(props) {
-  const { finalRows, totalSourceRows, setToast, reviewRows, sourceGeometry, sourceGeometryRows, sourceIdCol, exportViaBackend, projectId, auditLog, fetchAuditLog, merged, setActiveTab } = props;
+  const { finalRows, totalSourceRows, setToast, reviewRows, sourceGeometry, sourceGeometryRows, sourceIdCol, exportViaBackend, projectId, auditLog, fetchAuditLog, merged, setActiveTab, configName, setConfigName, configVersion, configId, onDownloadConfig, customMethods, methodA, methodB, methodC, methodD, methodE, runLog, saveEvalSet, setSaveEvalSet, evalSet, setEvalSet, pendingDecisions } = props;
   const candidateKeys = enabledMethodKeys(props, { candidatesOnly: true });
   const [mode, setMode] = useState("replace");
   const [format, setFormat] = useState(null);
@@ -2235,10 +2677,10 @@ function TabExportAudit(props) {
           <div className="text-sm font-semibold mb-1.5">Not ready to export yet</div>
           <div className="text-sm muted mb-4">
             Export produces the authoritative, final answer set. It only makes sense once every review row has been
-            decided and you've merged and finalized -- otherwise you'd be downloading a partial or undecided result.
+            decided and you've merged and finalized. Otherwise you'd be downloading a partial or undecided result.
           </div>
           <button onClick={() => setActiveTab(3)} className="btn btn-primary text-sm font-medium px-4 py-2">
-            &larr; Go finish review &amp; finalize
+            &larr; Finish review &amp; approval, then come back
           </button>
         </div>
       </div>
@@ -2273,10 +2715,18 @@ function TabExportAudit(props) {
       </div>
 
       <div className="card surf border p-4">
-        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Export</div>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-sm font-semibold">Just get the file</div>
+          <button onClick={() => doExport("csv")} className="btn btn-primary text-sm font-semibold px-5 py-2.5">Download CSV</button>
+        </div>
+        <div className="text-xs muted">The authoritative export, source ID, source name, target ID, target name, method, and score for every approved row. If you don't want to think about format or columns, this is the one.</div>
+      </div>
+
+      <div className="card surf border p-4">
+        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Other formats</div>
         <div className="flex gap-3">
           {["csv", "xlsx", "geojson"].map((fmt) => (
-            <button key={fmt} onClick={() => doExport(fmt)} className="btn btn-primary text-sm font-medium px-5 py-2.5 flex-1">Download .{fmt}</button>
+            <button key={fmt} onClick={() => doExport(fmt)} className="btn btn-ghost border text-sm font-medium px-5 py-2.5 flex-1">Download .{fmt}</button>
           ))}
         </div>
         {format && <div className="text-xs muted mt-3">Last export: {format}, {mode} mode</div>}
@@ -2319,6 +2769,66 @@ function TabExportAudit(props) {
           </table>
         </div>
       </div>
+
+      <div className="card surf border p-4">
+        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Configuration package</div>
+        <div className="flex items-center gap-3 mb-3">
+          <input
+            value={configName} onChange={(e) => setConfigName(e.target.value)}
+            className="surf2 border b rounded-md text-sm px-3 py-2 flex-1"
+            style={{ color: "var(--text)" }} placeholder="Name this configuration, e.g. Acme_Customer_Matching"
+          />
+          <span className="text-xs muted surf2 border b px-2 py-1.5 rounded-md flex-shrink-0">v{configVersion}</span>
+          <button onClick={onDownloadConfig} className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex-shrink-0">Download</button>
+        </div>
+        <div className="text-xs muted">
+          {configId} &middot; {customMethods.length} custom method(s) included &middot; settings only, never your actual source/target data.
+        </div>
+      </div>
+
+      {runLog.length > 0 && (
+        <div className="card surf border p-4">
+          <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">How this was produced</div>
+          <div className="flex flex-col gap-2">
+            {runLog.slice(0, 3).map((r) => (
+              <div key={r.run_id} className="surf2 border b rounded-md px-3 py-2.5 text-xs">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold font-mono">{r.run_id}</span>
+                  <span className="muted">{new Date(r.timestamp).toLocaleString()}</span>
+                </div>
+                <div className="muted">{r.config_name} v{r.config_version} &middot; {r.row_count} row(s) &middot; {r.methods.join(", ") || "no methods enabled"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="card surf border p-4">
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-xs font-semibold muted uppercase tracking-wide">Evaluation set</div>
+          <label className="text-xs muted flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={saveEvalSet} onChange={(e) => setSaveEvalSet(e.target.checked)} />
+            Save my review decisions as labeled examples
+          </label>
+        </div>
+        <div className="text-sm muted mb-3">
+          Off by default: a review decision only becomes a labeled example if you turn this on. Nothing is saved as training data without you explicitly choosing to.
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs muted">{evalSet.length} labeled example(s) saved this session.</span>
+          <button
+            onClick={() => {
+              downloadFile("relink_evaluation_set.json", JSON.stringify(evalSet, null, 2), "application/json");
+              setToast("Downloaded relink_evaluation_set.json.");
+            }}
+            disabled={evalSet.length === 0}
+            className="btn btn-ghost text-xs font-medium px-3 py-1.5"
+            style={evalSet.length === 0 ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+          >
+            Download evaluation set
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2357,6 +2867,10 @@ export default function RelinkStudio() {
   const [methodC, setMethodC] = useState(false);
   const [methodD, setMethodD] = useState(false);
   const [methodE, setMethodE] = useState(false);
+  // Custom methods: {id, name, path, entryFunction, description, enabled, version}.
+  // Frontend-only for now, see the backend note for how a path here would
+  // actually get loaded, versioned, and run alongside A-E.
+  const [customMethods, setCustomMethods] = useState([]);
   const [blockingFloor, setBlockingFloor] = useState(0.60);
   const [keepDigits, setKeepDigits] = useState(true);
   const [stripParens, setStripParens] = useState(true);
@@ -2387,8 +2901,74 @@ export default function RelinkStudio() {
   // Backend run state: which project/job we're tracking, and whether a
   // run is currently in flight (drives the "Execute pipeline" button).
   const [projectId, setProjectId] = useState(null);
+  // Configuration packages: a name/version/id wrapper around the same
+  // settings object already sent to the backend, so a config file is a
+  // reproducible "recipe" (never the actual source/target data) that can
+  // be handed to another engineer. Bumped on every download, since that's
+  // the moment "what I'm sending someone" is fixed.
+  const [configName, setConfigName] = useState("Untitled configuration");
+  const [configVersion, setConfigVersion] = useState(1);
+  const [configId] = useState(() => `cfg_${Math.random().toString(36).slice(2, 10)}`);
+  // Run metadata: enough to answer "how was this result produced" later,
+  // without a full run-history UI. runLog is local-only for now (see the
+  // backend note); a real backend would persist this per project/run.
+  const [runLog, setRunLog] = useState([]);
+  // Ground-truth / evaluation sets: OFF by default on purpose. Only
+  // populated while the toggle is on, in Approve & finalize.
+  const [saveEvalSet, setSaveEvalSet] = useState(false);
+  const [evalSet, setEvalSet] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [auditLog, setAuditLog] = useState([]);
+  // Skips the full flat checklist for anyone happy trusting the defaults:
+  // bulk-approves the same "safe" rows the Approve & finalize triage panel
+  // would offer to bulk-approve, immediately after the pipeline finishes,
+  // and drops straight onto the short needs-you list.
+  const [fastMode, setFastMode] = useState(false);
+
+  // Only the theme survived a refresh before this -- the project itself
+  // was gone the moment the tab reloaded, even though the backend still
+  // had it and every decision made against it. This is the fix: the
+  // backend project id (nothing else, no file contents) persists, and an
+  // accidental refresh becomes a one-click "resume" instead of starting
+  // over from an empty Sources & shape tab.
+  const RESUME_KEY = "relink_studio_last_project";
+  const [resumeInfo, setResumeInfo] = useState(() => {
+    try {
+      const raw = localStorage.getItem(RESUME_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
+  const [resumeDismissed, setResumeDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!projectId) return;
+    try {
+      localStorage.setItem(RESUME_KEY, JSON.stringify({
+        projectId,
+        sourceName: sourceFile.name,
+        targetName: targetFile.name,
+        savedAt: new Date().toISOString(),
+      }));
+    } catch { /* private browsing etc, non-fatal */ }
+  }, [projectId]);
+
+  async function resumeLastProject() {
+    if (!resumeInfo) return;
+    setToast("Resuming your last project...");
+    try {
+      const rows = await fetchAllReviewRows(resumeInfo.projectId);
+      setProjectId(resumeInfo.projectId);
+      setReviewRows(rows);
+      setReviewSelectedId(rows[0]?.sourceId ?? null);
+      setPendingDecisions({});
+      setActiveTab(4);
+      setToast(`Resumed: ${rows.length} row(s) loaded.`);
+    } catch (e) {
+      setToast(`Couldn't resume that project, it may no longer exist on the backend: ${e.message}`);
+      try { localStorage.removeItem(RESUME_KEY); } catch { /* non-fatal */ }
+      setResumeInfo(null);
+    }
+  }
 
   /* Backend connection: address, auth session, and live /health status -- */
   /* see ConnectionStatus in the top bar. Polled periodically so switching */
@@ -2483,6 +3063,17 @@ export default function RelinkStudio() {
       setToast("Upload both a source and target file (with a successful backend upload) before running.");
       return;
     }
+    if (shape !== "single") {
+      const incomplete = chainSteps.find((s) => !s.file.fileId || !s.idCol || !s.matchCol);
+      if (chainSteps.length === 0) {
+        setToast(`Add at least one ${shape === "chained" ? "chain step" : "spoke"}, or switch back to Single link.`);
+        return;
+      }
+      if (incomplete) {
+        setToast("Every step needs its own file uploaded and ID/match columns picked before running.");
+        return;
+      }
+    }
     if (!methodA && !methodB && !methodC && !methodD && !methodE) {
       setToast("Enable at least one matching method (Tab 2) before running.");
       return;
@@ -2527,8 +3118,59 @@ export default function RelinkStudio() {
       setReviewSelectedId(rows[0]?.sourceId ?? null);
       setPendingDecisions({});
       setMerged(false);
-      setToast({ message: `Pipeline finished: ${rows.length} row(s) matched. Opening the review queue.` });
-      setActiveTab(3);
+
+      // Run metadata: enough to answer "how was this result produced"
+      // later, without a full run-history UI. Local only for now, a real
+      // backend would persist this per project.
+      const activeMethods = [
+        methodA && METHOD_META.A.label, methodB && METHOD_META.B.label, methodC && METHOD_META.C.label,
+        methodD && METHOD_META.D.label, methodE && METHOD_META.E.label,
+      ].filter(Boolean);  // custom methods are deliberately excluded: the backend never ran them
+      setRunLog((prev) => [
+        {
+          run_id: `run_${prev.length + 1}`,
+          project_id: project.id,
+          config_name: configName, config_version: configVersion,
+          methods: activeMethods,
+          row_count: rows.length,
+          timestamp: new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+
+      if (fastMode) {
+        // Same "safe to bulk" definition as the Approve & finalize triage
+        // panel: full method agreement, not a collision, score at or above
+        // the auto-approve threshold. Uses project.id directly rather than
+        // the projectId state (which hasn't re-rendered yet at this point
+        // in the same synchronous flow that just called setProjectId).
+        const eligible = rows.filter((r) => {
+          const candidates = Object.values(r.methods).filter((m) => m.targetId !== null);
+          const uniqueTargets = new Set(candidates.map((m) => m.targetId));
+          const bestScore = candidates.length ? Math.max(...candidates.map((m) => m.score ?? 0)) : null;
+          return candidates.length >= 2 && uniqueTargets.size === 1 && r.kind !== "collision" && bestScore !== null && bestScore >= autoApprove;
+        });
+        let approvedCount = 0;
+        if (eligible.length > 0) {
+          try {
+            await apiJson(`/projects/${project.id}/review/bulk`, {
+              method: "POST",
+              body: JSON.stringify({ action: "approve", source_ids: eligible.map((r) => r.sourceId) }),
+            });
+            const approvedIds = new Set(eligible.map((r) => r.sourceId));
+            setReviewRows(rows.map((r) => (approvedIds.has(r.sourceId) ? { ...r, approved: true } : r)));
+            setPendingDecisions(Object.fromEntries(eligible.map((r) => [r.sourceId, "approved"])));
+            approvedCount = eligible.length;
+          } catch (e) {
+            setToast(`Fast mode's auto-approve step failed, every row is still here to review manually: ${e.message}`);
+          }
+        }
+        setToast({ message: `Pipeline finished: ${rows.length} row(s) matched${approvedCount ? `, ${approvedCount} auto-approved` : ""}. ${rows.length - approvedCount} left to look at.` });
+        setActiveTab(4);
+      } else {
+        setToast({ message: `Pipeline finished: ${rows.length} row(s) matched. Opening the review queue.` });
+        setActiveTab(3);
+      }
     } catch (e) {
       setToast(`Pipeline run failed: ${e.message}`);
     } finally {
@@ -2649,8 +3291,17 @@ export default function RelinkStudio() {
         type_column: typeColumn, type_expected: typeExpected, allow_many_to_one: allowManyToOne,
       },
       linking_shape: shape,
-      chain_steps: shape !== "single" ? chainSteps : [],
-      methods: [methodA && "fuzzy", methodB && "recordlinkage", methodD && "geometry_corroboration", methodE && "splink"].filter(Boolean),
+      // Each step names what it matches against (the base target for the
+      // first extra step, the previous step for later ones in a chain, or
+      // always the original source for a hub spoke) so the backend can
+      // build the right dependency order without guessing.
+      chain_steps: shape !== "single" ? chainSteps.map((s, i) => ({
+        step_id: s.id,
+        input_ref: shape === "chained" ? (i === 0 ? "target" : chainSteps[i - 1].id) : "source",
+        file: s.file.name, file_id: s.file.fileId,
+        id_column: s.idCol, match_column: s.matchCol, hierarchy: s.hierarchy,
+      })) : [],
+      methods: [methodA && "fuzzy", methodB && "recordlinkage", methodD && "geometry_corroboration", methodE && "splink", methodC && "embedding"].filter(Boolean),
       thresholds: { auto_approve: autoApprove, needs_review: needsReview },
       matching: { blocking_floor: blockingFloor, keep_digits: keepDigits, strip_parentheticals: stripParens, strip_suffix_words: stripSuffixWords, case_sensitive: caseSensitive },
       safety: { collision_guard: collisionGuard, auto_downgrade_ties: autoDowngradeTies, require_hierarchy_match: requireHierarchyMatch, strict_zone_match: strictZoneMatch, flag_low_coverage_zones: flagLowCoverageZones },
@@ -2658,10 +3309,31 @@ export default function RelinkStudio() {
     };
   }
 
+  function buildConfigPackage() {
+    // Configuration, not data: only settings, column names, and file
+    // names/paths ever go in here, never actual row contents, and never
+    // credentials. custom_methods carries a path reference to the
+    // engineer's own script, not the script's contents.
+    return {
+      relink_config: true,
+      name: configName,
+      version: configVersion,
+      config_id: configId,
+      created_at: new Date().toISOString(),
+      relink_version: RELINK_VERSION,
+      custom_methods: customMethods.map((m) => ({
+        name: m.name, path: m.path, entry_function: m.entryFunction, description: m.description, enabled: m.enabled, version: m.version,
+      })),
+      settings: buildConfigObject(),
+    };
+  }
+
   function handleDownloadConfig() {
-    const config = buildConfigObject();
-    downloadFile("relink_studio_config.json", JSON.stringify(config, null, 2), "application/json");
-    setToast("Downloaded relink_studio_config.json. Anyone can upload this to load your exact setup.");
+    const pkg = buildConfigPackage();
+    const fileSlug = configName.trim().replace(/\s+/g, "_").replace(/[^\w-]/g, "") || "relink_studio_config";
+    downloadFile(`${fileSlug}_v${configVersion}.json`, JSON.stringify(pkg, null, 2), "application/json");
+    setToast(`Downloaded ${fileSlug}_v${configVersion}.json. Anyone can upload this to reproduce your exact setup (never your actual data).`);
+    setConfigVersion((v) => v + 1);
   }
 
   function handleUploadConfig(e) {
@@ -2670,7 +3342,22 @@ export default function RelinkStudio() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const c = JSON.parse(reader.result);
+        const raw = JSON.parse(reader.result);
+        // Backward compatible: an older, unwrapped flat config still loads
+        // fine, it just arrives with no name/version/custom methods of
+        // its own.
+        const isPackage = raw && raw.relink_config === true;
+        const c = isPackage ? raw.settings : raw;
+        if (isPackage) {
+          setConfigName(raw.name || "Untitled configuration");
+          setConfigVersion(typeof raw.version === "number" ? raw.version : 1);
+          if (Array.isArray(raw.custom_methods)) {
+            setCustomMethods(raw.custom_methods.map((m, i) => ({
+              id: `custom_${Date.now()}_${i}`, name: m.name, path: m.path, entryFunction: m.entry_function || "score",
+              description: m.description || "", enabled: !!m.enabled, version: m.version || 1,
+            })));
+          }
+        }
         if (c.source) {
           setSourceIdCol(c.source.id_column ?? sourceIdCol);
           setSourceMatchCol(c.source.match_column ?? sourceMatchCol);
@@ -2686,12 +3373,21 @@ export default function RelinkStudio() {
           setAllowManyToOne(c.target.allow_many_to_one ?? allowManyToOne);
         }
         if (c.linking_shape) setShape(c.linking_shape);
-        if (c.chain_steps) setChainSteps(c.chain_steps);
+        if (c.chain_steps) {
+          // A config file only carries column choices, not the files
+          // themselves, each step comes back needing its file reattached.
+          setChainSteps(c.chain_steps.map((s, i) => ({
+            id: s.step_id || `step_${Date.now()}_${i}`,
+            file: { name: "No file selected", format: "-", rowCount: 0, columns: ["(upload a file to see columns)"], geometry: null, geometryRows: null, fileId: null, uploadError: null },
+            idCol: s.id_column || "", matchCol: s.match_column || "", hierarchy: s.hierarchy || [],
+          })));
+        }
         if (c.methods) {
           setMethodA(c.methods.includes("fuzzy"));
           setMethodB(c.methods.includes("recordlinkage"));
           setMethodD(c.methods.includes("geometry_corroboration"));
           setMethodE(c.methods.includes("splink"));
+          setMethodC(c.methods.includes("embedding"));
         }
         if (c.thresholds) {
           setAutoApprove(c.thresholds.auto_approve ?? autoApprove);
@@ -2712,7 +3408,7 @@ export default function RelinkStudio() {
           setFlagLowCoverageZones(c.safety.flag_low_coverage_zones ?? flagLowCoverageZones);
         }
         if (c.output) setSortOutputBy(c.output.sort_by ?? sortOutputBy);
-        setToast(`Loaded configuration from ${file.name}. Setup now matches the file you uploaded.`);
+        setToast(isPackage ? `Loaded "${raw.name}" v${raw.version}. Setup now matches that configuration.` : `Loaded configuration from ${file.name}. Setup now matches the file you uploaded.`);
       } catch (err) {
         setToast(`Could not read ${file.name}: not a valid ReLink Studio config file.`);
       }
@@ -2727,6 +3423,7 @@ export default function RelinkStudio() {
     shape, setShape, chainSteps, setChainSteps,
     autoApprove, setAutoApprove, needsReview, setNeedsReview, methodA, setMethodA, methodB, setMethodB, methodC, setMethodC, methodD, setMethodD, methodE, setMethodE,
     blockingFloor, setBlockingFloor, keepDigits, setKeepDigits, stripParens, setStripParens, stripSuffixWords, setStripSuffixWords, caseSensitive, setCaseSensitive,
+    customMethods, setCustomMethods,
     collisionGuard, setCollisionGuard, allowManyToOne, setAllowManyToOne, excludePattern, setExcludePattern,
     typeColumn, setTypeColumn, typeExpected, setTypeExpected, strictZoneMatch, setStrictZoneMatch,
     autoDowngradeTies, setAutoDowngradeTies, requireHierarchyMatch, setRequireHierarchyMatch,
@@ -2737,18 +3434,29 @@ export default function RelinkStudio() {
     setToast, setActiveTab,
     projectId, patchReviewRow, bulkReview, undoReview, geocodeLookup,
     exportViaBackend, auditLog, fetchAuditLog,
+    configName, setConfigName, configVersion, configId, onDownloadConfig: handleDownloadConfig,
+    runLog, saveEvalSet, setSaveEvalSet, evalSet, setEvalSet,
   };
 
   // What has to be true before "Continue" is allowed to move off the current tab.
   // Keeps the nav footer's enabled/disabled state consistent across every tab.
   const filesReady = sourceFile.name !== "No source file selected" && targetFile.name !== "No target file selected"
     && sourceIdCol && sourceMatchCol && targetIdCol && targetMatchCol
-    && sourceFile.fileId && targetFile.fileId;
+    && sourceFile.fileId && targetFile.fileId
+    && (shape === "single" || (chainSteps.length > 0 && chainSteps.every((s) => s.file.fileId && s.idCol && s.matchCol)));
   const methodChosen = methodA || methodB || methodC || methodD || methodE;
 
   let navProps = { activeTab, setActiveTab };
   if (activeTab === 0) {
-    navProps = { ...navProps, canContinue: filesReady, blockedReason: (sourceFile.uploadError || targetFile.uploadError) ? "Backend upload failed for one of your files, check the warning above and re-upload." : "Upload both a source and target file to continue." };
+    navProps = {
+      ...navProps,
+      canContinue: filesReady,
+      blockedReason: (sourceFile.uploadError || targetFile.uploadError)
+        ? "Backend upload failed for one of your files, check the warning above and re-upload."
+        : (shape !== "single" && chainSteps.some((s) => !s.file.fileId || !s.idCol || !s.matchCol))
+        ? "Every chain step/spoke needs its own file uploaded and columns picked too."
+        : "Upload both a source and target file to continue.",
+    };
   } else if (activeTab === 1) {
     navProps = { ...navProps, canContinue: methodChosen, blockedReason: "Enable at least one matching method to continue." };
   } else if (activeTab === 4) {
@@ -2764,7 +3472,20 @@ export default function RelinkStudio() {
     <div data-theme={theme} className="rls" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{TOKENS_CSS}</style>
       {toast && <Toast toast={toast} onDone={() => setToast(null)} />}
-      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} connection={connection} />
+      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} connection={connection} fastMode={fastMode} setFastMode={setFastMode} />
+
+      {resumeInfo && !resumeDismissed && resumeInfo.projectId !== projectId && (
+        <div className="surf border-b b px-5 py-2.5 flex items-center justify-between gap-3" style={{ flexShrink: 0, background: "var(--primary-soft)" }}>
+          <div className="text-xs">
+            <span className="font-semibold">Resume your last project?</span>{" "}
+            <span className="muted">{resumeInfo.sourceName} &harr; {resumeInfo.targetName}, saved {new Date(resumeInfo.savedAt).toLocaleString()}.</span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button onClick={resumeLastProject} className="btn btn-primary text-xs font-medium px-3 py-1.5">Resume</button>
+            <button onClick={() => setResumeDismissed(true)} className="btn btn-ghost text-xs font-medium px-2 py-1.5">Dismiss</button>
+          </div>
+        </div>
+      )}
 
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         {activeTab === 0 && <TabSourcesShape {...tabProps} />}

@@ -17,7 +17,7 @@ Relink Studio tries to close that gap using a few different fuzzy matching appro
 
 - A Flask backend (`relink-api/`) that does the real matching work: normalizing strings, blocking candidates so it isn't comparing every row against every other row, scoring, and combining multiple methods into one decision per row.
 - A React frontend, either as a standalone file (`relink_studio.jsx`) you can drop into your own Vite project, or scaffolded automatically by the setup script into its own `relink-studio/` folder.
-- A setup script (`setup_relink_studio.sh`) that sets up a Python virtual environment, installs backend dependencies, verifies the backend boots, scaffolds the frontend (Vite, React, Tailwind) if it doesn't already exist, checks that it builds, and starts both servers (pass `--no-start` to only set up).
+- A setup script (`setup_relink_studio.sh`) that sets up a Python virtual environment, installs backend dependencies, optionally installs the heavier embedding-based method, scaffolds the frontend if it doesn't already exist, and starts both servers.
 - A couple of small test datasets under `test-dataset/` so you can try the pipeline out before pointing it at real data.
 
 ## Getting it running
@@ -101,8 +101,7 @@ This is where you tell the tool how confident it needs to be before it trusts a 
 **Matching methods**, each one an independent opinion on whether two rows match:
 
 - **Method A, difflib**: character-level fuzzy matching using Python's built-in `difflib`. No extra dependencies, and it's the best general-purpose default for spelling variants and small formatting differences. On by default.
-- **Method B, token overlap**: a lightweight blocking + Jaccard token-overlap linker, an approximation of the `recordlinkage` package rather than a wrapper of it. It corroborates what Method A finds rather than replacing it. On by default.
-- **Method C, semantic embedding**: matches on meaning using a local sentence-transformers model, useful when names differ in wording rather than spelling. Optional: `pip install -r relink-api/requirements-embedding.txt`. It compares every source row to every target row, so prefer A/B on very large files. A model named by default is downloaded once from the Hugging Face hub; for fully offline use set `RELINK_EMBEDDING_MODEL` to a local folder and `RELINK_EMBEDDING_OFFLINE=1`. Off by default.
+- **Method B, recordlinkage**: a second, differently tuned distance measure, meant to corroborate what Method A finds rather than replace it. Also on by default.
 - **Method D, geometry corroboration**: not a name scorer at all. If both files have real latitude/longitude or polygon geometry, this flags a candidate as suspicious when its coordinates sit unexpectedly far from the source record's location, even if the name matched perfectly. Useful as a sanity check, especially for place-based data where two very differently located things can coincidentally have similar names.
 - **Method E, splink**: a probabilistic matcher based on the Fellegi-Sunter model, which learns how much weight each field should carry from the actual data rather than using a fixed formula. Worth turning on once linking tens of thousands of rows or more. For smaller datasets, A and B are simpler and just as effective, so this stays off by default.
 
@@ -134,8 +133,7 @@ Both Method A and Method B use a blocking key to avoid comparing every source ro
 
 ## Known limitations
 
-- Custom methods added in the UI are saved in the config package only; the backend never runs user-supplied scripts.
-- Method E (splink) is an optional dependency, not installed by default. Install it with `pip install splink==4.0.16` inside the backend's virtual environment (`requirements-optional.txt` installs it too, plus the optional database drivers).
+- Method E (splink) is an optional dependency, not installed by default. Install it with `pip install -r relink-api/requirements-optional.txt` inside the backend's virtual environment if you want it.
 - Geometry corroboration (Method D) only kicks in when both your source and target files are GeoJSON with actual geometry in them. Plain latitude and longitude columns in a CSV won't trigger it, since the tool needs real geometry objects to compute distances from.
 - The Nominatim lookup button in the review queue is rate limited to one request per second, per OpenStreetMap's usage policy. Set the `RELINK_NOMINATIM_USER_AGENT` environment variable to real contact information (your name plus an email or project URL) before relying on it for anything beyond occasional testing.
 

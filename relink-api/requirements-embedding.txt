@@ -1,0 +1,2 @@
+# Optional -- enables Method C ("embedding"). Pulls in PyTorch, so it is large.
+sentence-transformers

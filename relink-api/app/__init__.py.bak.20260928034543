@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 
 from .db import init_db
@@ -38,23 +38,6 @@ def create_app():
 
     from .routes_db_ingest import bp as api_bp_db_ingest
     app.register_blueprint(api_bp_db_ingest, url_prefix="/api")
-
-    @app.before_request
-    def _enforce_auth_globally():
-        # RELINK_REQUIRE_AUTH used to gate only the few routes carrying an
-        # explicit @require_auth decorator, so in LAN mode upload / projects /
-        # review / export were reachable without logging in. Enforce it for
-        # every /api route instead. /health and the static frontend stay open.
-        if not app.config.get("RELINK_REQUIRE_AUTH"):
-            return None
-        if request.method == "OPTIONS" or not request.path.startswith("/api/"):
-            return None
-        if request.path in ("/api/auth/login", "/api/auth/register"):
-            return None
-        from .auth import get_current_user
-        if not get_current_user():
-            return jsonify({"error": "Authentication required. Send 'Authorization: Bearer <token>' from POST /api/auth/login."}), 401
-        return None
 
     @app.route("/health")
     def health():

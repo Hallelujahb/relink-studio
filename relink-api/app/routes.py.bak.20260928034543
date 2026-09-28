@@ -16,7 +16,6 @@ from .auth import require_auth, actor_name
 from .db import get_conn
 from .parsers import ParseError, parse_file, save_parsed_payload, load_parsed_payload
 from .matching_splink import method_e_splink, SplinkUnavailable
-from .matching_embedding import method_c_embedding, EmbeddingUnavailable
 
 bp = Blueprint("api", __name__)
 
@@ -84,20 +83,8 @@ def auth_register():
         return _err("Missing 'username' and/or 'password'.")
     if len(password) < 8:
         return _err("Password must be at least 8 characters.")
-    role = body.get("role", "reviewer")
-    first_user = get_conn().execute("SELECT 1 FROM users LIMIT 1").fetchone() is None
-    caller = auth_module.get_current_user()
-    caller_is_lead = bool(caller and caller["role"] == "lead")
-    # Anyone could previously register themselves as "lead" and defeat the
-    # approval hierarchy. Now: the very first account bootstraps (any role);
-    # after that only a logged-in lead can create leads, and when auth is
-    # required only a lead can create accounts at all.
-    if role == "lead" and not (first_user or caller_is_lead):
-        return _err("Only an existing lead can create a lead account.", 403)
-    if current_app.config.get("RELINK_REQUIRE_AUTH") and not (first_user or caller_is_lead):
-        return _err("Registration is closed. Ask a lead to create your account.", 403)
     try:
-        user = auth_module.register_user(username, password, role)
+        user = auth_module.register_user(username, password, body.get("role", "reviewer"))
     except ValueError as e:
         return _err(str(e))
     return jsonify(user), 201
@@ -333,16 +320,6 @@ def _run_matching_job(app, project_id, job_id, triggered_by):
                     method_results["E"] = {}
                     method_meta["E"] = {"error": str(e)}
 
-            if "embedding" in methods_enabled:
-                try:
-                    method_results["C"], embedding_meta = method_c_embedding(
-                        source_rows, target_rows, src_id_col, src_match_col, tgt_id_col, tgt_match_col,
-                        matching_cfg, blocking_floor)
-                    method_meta["C"] = embedding_meta
-                except EmbeddingUnavailable as e:
-                    method_results["C"] = {}
-                    method_meta["C"] = {"error": str(e)}
-
             rows = matching.combine_methods(
                 source_rows, src_id_col, src_name_col, method_results,
                 target_rows, tgt_id_col, tgt_type_col, tgt_type_expected, config)
@@ -384,9 +361,7 @@ def _run_matching_job(app, project_id, job_id, triggered_by):
 
             conn.execute("UPDATE projects SET status='matched', updated_at=? WHERE id=?", (_now(), project_id))
             conn.commit()
-            method_warnings = [f"Method {k}: {v['error']}" for k, v in method_meta.items() if v.get("error")]
-            done_message = f"Matched {len(rows)} row(s)." + (" Warning: " + "; ".join(method_warnings) if method_warnings else "")
-            set_job("done", progress=len(rows), total=len(rows), message=done_message)
+            set_job("done", progress=len(rows), total=len(rows), message=f"Matched {len(rows)} row(s).")
             _log_audit(conn, project_id, "run_completed",
                        {"row_count": len(rows), "methods": list(methods_enabled), "method_notes": method_meta},
                        actor=triggered_by)

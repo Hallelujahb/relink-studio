@@ -37,7 +37,7 @@ from .review_decisions import REJECTION_REASONS, DECISION_TYPES
 from .retention import storage_usage_summary, preview_cleanup, delete_items, cleanup_audit_entry
 from .connectors import list_capabilities
 from .explainability import explain_review_row
-from .auth import actor_name, get_current_user
+from .auth import actor_name
 
 bp = Blueprint("api_extra", __name__)
 
@@ -462,35 +462,9 @@ def admin_cleanup_execute():
     if not confirm:
         return _err("Refusing to delete without confirm=true. Show the preview to the user first.")
 
-    if current_app.config.get("RELINK_REQUIRE_AUTH"):
-        user = get_current_user()
-        if not user or user["role"] != "lead":
-            return _err("Cleanup requires the 'lead' role.", 403)
-
-    # `items` comes from the client, so never trust its paths: only files
-    # inside the upload directory, and never ones a project still references.
-    upload_root = os.path.realpath(current_app.config["UPLOAD_DIR"])
+    result = delete_items(items, confirm=True)
     conn = get_conn()
-    protected = set()
-    for prj in conn.execute("SELECT source_file_id, target_file_id FROM projects").fetchall():
-        for fid in (prj["source_file_id"], prj["target_file_id"]):
-            if fid:
-                frow = conn.execute("SELECT stored_path FROM files WHERE id=?", (fid,)).fetchone()
-                if frow:
-                    protected.add(os.path.realpath(frow["stored_path"]))
-                protected.add(os.path.realpath(os.path.join(upload_root, f"{fid}.parsed.json")))
-    safe_items = []
-    for it in items:
-        real = os.path.realpath(str((it or {}).get("path", "")))
-        if not real.startswith(upload_root + os.sep):
-            return _err(f"Refusing to delete a path outside the upload directory: {(it or {}).get('path')!r}", 400)
-        if real in protected:
-            return _err(f"Refusing to delete a file an active project still uses: {real!r}", 400)
-        if os.path.isfile(real):
-            safe_items.append({"path": real, "bytes": os.path.getsize(real)})
-
-    result = delete_items(safe_items, confirm=True)
-    entry = cleanup_audit_entry(actor, "manual_admin_cleanup", safe_items, confirmed=True)
+    entry = cleanup_audit_entry(actor, "manual_admin_cleanup", items, confirmed=True)
     conn.execute(
         "INSERT INTO audit_log (id, project_id, actor, action, detail, created_at) VALUES (?,?,?,?,?,?)",
         (_uid(), "system", entry["actor"], entry["action"], json.dumps(entry["detail"]), entry["created_at"]),

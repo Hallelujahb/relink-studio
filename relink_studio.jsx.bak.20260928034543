@@ -39,11 +39,6 @@ function setAuthToken(token) {
   } catch { /* private browsing, etc. */ }
 }
 
-// Frontend build tag only -- stamped into downloaded configuration
-// packages (see buildConfigPackage) so a config file records which UI
-// version produced it. Not sent to, or checked against, the backend.
-const RELINK_VERSION = "0.9.0-preview";
-
 class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -132,35 +127,25 @@ const TOKENS_CSS = `
     --success: #22C55E; --success-soft: #12281A; --success-border: #3A7A57;
     --warning: #F59E0B; --warning-soft: #2E2411;
     --danger: #EF4444; --danger-soft: #341418; --danger-border: #93414D;
-    --method-a: #3B82F6; --method-b: #14B8A6; --method-c: #A78BFA; --method-d: #FB923C; --method-e: #F43F5E;
-    --method-f: #EC4899; --method-g: #EAB308; --method-h: #06B6D4;
-    --success-track: var(--success); --warning-track: var(--warning); --primary-track: var(--primary);
+    --method-a: #3B82F6; --method-b: #14B8A6; --method-c: #A78BFA; --method-d: #FB923C; --method-e: #818CF8;
     --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.25);
   }
   .rls[data-theme="light"] {
-    /* Flat near-white SaaS theme -- no gradients, no tinted bars. Every
-       surface (top bar, tab strip, bottom bar, cards) is the same
-       near-white, distinguished only by thin borders, with blue used
-       solely as the accent for selection/active/primary-action states. */
-    --bg: #F5F7FA; --surface: #FFFFFF; --surface-2: #F7F9FC; --surface-hover: #EEF2F7;
-    --border: #E3E8F0; --border-strong: #C9D3E0;
-    --text: #1A1D29; --text-muted: #667085;
-    --primary: #2F5FDB; --primary-hover: #2449AE; --primary-soft: #EAF1FE;
-    --success: #157F3D; --success-soft: #DEEEDF; --success-border: #6E9C79;
-    --warning: #B4620A; --warning-soft: #F1E4CE;
-    --danger: #B91C1C; --danger-soft: #F3DBD8; --danger-border: #B9847C;
-    --method-a: #2F5FDB; --method-b: #0D9488; --method-c: #9333EA; --method-d: #B4620A; --method-e: #DB2760;
-    --method-f: #C2185B; --method-g: #B7860B; --method-h: #0E7490;
-    --success-track: var(--success); --warning-track: var(--warning); --primary-track: var(--primary);
-    --shadow: 0 1px 2px rgba(20,30,60,0.05), 0 4px 10px rgba(20,30,60,0.06);
+    /* Softer than a stark cool-white: warmer, lower-contrast "paper" gray
+       instead of near-pure white surfaces on near-white background, plus
+       a warm off-black for text instead of near-pure black. Meaningfully
+       easier on the eyes for long review sessions. */
+    --bg: #EAE8E2; --surface: #F7F6F1; --surface-2: #EFEDE6; --surface-hover: #E4E2D9;
+    --border: #DCDACF; --border-strong: #C7C4B5;
+    --text: #33322C; --text-muted: #726F62;
+    --primary: #2563EB; --primary-hover: #1D4ED8; --primary-soft: #E3E9F9;
+    --success: #16A34A; --success-soft: #E7F3EA; --success-border: #7FA88E;
+    --warning: #B4620A; --warning-soft: #F7EEE0;
+    --danger: #C4331F; --danger-soft: #F6E7E3; --danger-border: #B98178;
+    --method-a: #2563EB; --method-b: #0D9488; --method-c: #7C3AED; --method-d: #B4620A; --method-e: #4338CA;
+    --shadow: 0 1px 2px rgba(40,35,20,0.05), 0 4px 10px rgba(40,35,20,0.05);
   }
   .rls { background: var(--bg); color: var(--text); }
-  .rls[data-theme="light"] .topbar-tint { background: var(--surface); }
-  .rls[data-theme="dark"] .topbar-tint { background: linear-gradient(100deg, #16213F 0%, #262244 50%, #3A2F52 100%); }
-  .rls[data-theme="light"] .chrome-bar { background: var(--surface); }
-  .rls[data-theme="dark"] .chrome-bar { background: linear-gradient(90deg, #161A24 0%, #1A1F2B 50%, #1E2433 100%); }
-  .rls[data-theme="dark"] .shape-active { background: var(--primary-soft); }
-  .rls[data-theme="light"] .shape-active { background: var(--primary-soft); }
   .surf { background: var(--surface); border-color: var(--border); }
   .surf2 { background: var(--surface-2); border-color: var(--border); }
   .muted { color: var(--text-muted); }
@@ -201,22 +186,13 @@ const TOKENS_CSS = `
   input[type="number"] { -moz-appearance: textfield; }
   /* Browsers default the unfilled portion of a range slider to a fixed
      light gray track, which reads as a stray white bar in dark mode.
-     Naively setting the host <input>'s own "background" does nothing once
-     ::-webkit-slider-runnable-track is customized -- WebKit only paints
-     that pseudo-element's own background, the host's background is never
-     shown underneath it. Custom properties (unlike "background" itself)
-     DO inherit into pseudo-elements, so the per-slider fill gets passed
-     down as --track-fill and the pseudo-elements read it from there. */
-  input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 999px; background: transparent; outline: none; }
-  input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: var(--track-fill, var(--border)); }
+     accent-color (set inline per slider) only themes the filled side, the
+     track itself needs its own themed background here. */
+  input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 999px; background: var(--border); outline: none; }
+  input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: transparent; }
   input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; margin-top: -5px; background: var(--text); border: 2px solid var(--surface); cursor: pointer; }
-  input[type="range"]::-moz-range-track { height: 4px; border-radius: 999px; background: var(--track-fill, var(--border)); }
+  input[type="range"]::-moz-range-track { height: 4px; border-radius: 999px; background: var(--border); }
   input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--text); border: 2px solid var(--surface); cursor: pointer; }
-  /* Light theme only: the thumb defaulting to --text (near-black) reads
-     as a stray black dot on these light bars, so give it the slider's
-     own accent color instead (falls back to --primary if none is set). */
-  .rls[data-theme="light"] input[type="range"]::-webkit-slider-thumb { background: var(--thumb-accent, var(--primary)); }
-  .rls[data-theme="light"] input[type="range"]::-moz-range-thumb { background: var(--thumb-accent, var(--primary)); }
   th { text-align: left; font-weight: 600; }
   .rls-grid-review { display: grid; grid-template-columns: 270px 1fr 350px; height: 100%; min-height: 0; }
   @media (max-width: 900px) {
@@ -334,7 +310,6 @@ function NumberStepper({ value, setValue, min = 0, max = 1, step = 0.01 }) {
 }
 
 function ThresholdSlider({ label, value, setValue, accent }) {
-  const pct = Math.round(value * 100);
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
@@ -344,15 +319,7 @@ function ThresholdSlider({ label, value, setValue, accent }) {
       <input
         type="range" min="0" max="1" step="0.01" value={value}
         onChange={(e) => setValue(parseFloat(e.target.value))}
-        className="w-full"
-        style={{
-          accentColor: accent,
-          // See the CSS comment above: this has to travel as a custom
-          // property, not a literal `background`, or WebKit silently
-          // drops it once the track pseudo-element is customized.
-          "--track-fill": `linear-gradient(to right, ${accent} 0%, ${accent} ${pct}%, var(--border) ${pct}%, var(--border) 100%)`,
-          "--thumb-accent": accent,
-        }}
+        className="w-full" style={{ accentColor: accent }}
       />
     </div>
   );
@@ -457,7 +424,7 @@ function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChe
 function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged, connection, fastMode, setFastMode }) {
   return (
     <div style={{ position: "sticky", top: 0, zIndex: 30, flexShrink: 0 }}>
-      <div className="topbar-tint b border-b flex items-center justify-between px-5 py-2">
+      <div className="surf border-b flex items-center justify-between px-5 py-2">
         <div className="flex items-center gap-3">
           <Logo />
           <span className="font-semibold text-sm tracking-tight">ReLink Studio</span>
@@ -500,7 +467,7 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
           </button>
         </div>
       </div>
-      <div className="surf chrome-bar border-b flex items-center px-5 py-1.5 gap-2 overflow-x-auto">
+      <div className="surf border-b flex items-center px-5 py-1.5 gap-2 overflow-x-auto">
         {TAB_LABELS.map((label, i) => {
           // The export tab produces the authoritative CSV, which only makes
           // sense once review decisions are merged & finalized -- but rather
@@ -544,12 +511,12 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
   // scrollable tab content (see the root layout below) so it never moves.
   return (
     <div
-      className="surf chrome-bar border-t b flex items-center justify-between px-5 py-1.5"
+      className="surf border-t b flex items-center justify-between px-5 py-3"
       style={{ flexShrink: 0, position: "sticky", bottom: 0, zIndex: 30 }}
     >
       <div>
         {!isFirst && (
-          <button onClick={() => setActiveTab(activeTab - 1)} className="btn btn-ghost text-sm font-medium px-3.5 py-1.5">
+          <button onClick={() => setActiveTab(activeTab - 1)} className="btn btn-ghost text-sm font-medium px-4 py-2">
             &larr; Back
           </button>
         )}
@@ -562,7 +529,7 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
           <button
             onClick={() => { if (canContinue) (onContinue ? onContinue() : setActiveTab(activeTab + 1)); }}
             disabled={!canContinue}
-            className="btn btn-primary text-sm font-medium px-3.5 py-1.5"
+            className="btn btn-primary text-sm font-medium px-4 py-2"
             style={!canContinue ? { opacity: 0.45, cursor: "not-allowed" } : {}}
             title={!canContinue ? blockedReason : undefined}
           >
@@ -1088,8 +1055,8 @@ function ShapeOption({ label, description, active, onClick, diagram }) {
   return (
     <button
       onClick={onClick}
-      className={`card border p-3.5 flex flex-col gap-3 text-left flex-1 transition-all${active ? " shape-active" : ""}`}
-      style={active ? { borderColor: "var(--primary)" } : { background: "var(--surface-2)", borderColor: "var(--border)" }}
+      className="card border p-3.5 flex flex-col gap-3 text-left flex-1 transition-all"
+      style={active ? { background: "var(--primary-soft)", borderColor: "var(--primary)" } : { background: "var(--surface-2)", borderColor: "var(--border)" }}
     >
       <div>
         <div className="text-sm font-semibold" style={active ? { color: "var(--primary)" } : {}}>{label}</div>
@@ -1201,15 +1168,9 @@ function TabSourcesShape(props) {
 /* Tab 2: Hierarchy & methods                                            */
 /* ---------------------------------------------------------------------- */
 
-function MethodCard({ name, engine, description, warning, enabled, onToggle, accent, footer }) {
+function MethodCard({ name, engine, description, warning, enabled, onToggle, accent }) {
   return (
-    <div
-      className="card border p-4"
-      style={{
-        background: enabled ? `color-mix(in srgb, ${accent} 16%, transparent)` : "color-mix(in srgb, var(--surface-2) 55%, transparent)",
-        borderColor: enabled ? accent : "var(--border)",
-      }}
-    >
+    <div className="card border p-4" style={{ background: enabled ? `${accent}10` : "var(--surface-2)", borderColor: enabled ? accent : "var(--border)" }}>
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2.5">
           <span className="w-2.5 h-2.5 rounded-full" style={{ background: accent }} />
@@ -1226,97 +1187,6 @@ function MethodCard({ name, engine, description, warning, enabled, onToggle, acc
           {warning}
         </div>
       )}
-      {footer}
-    </div>
-  );
-}
-
-function AddMethodCard({ onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className="card p-4 flex flex-col items-center justify-center gap-2 text-center"
-      style={{ border: "1.5px dashed var(--border)", background: "transparent", minHeight: "132px" }}
-    >
-      <span className="text-xl muted">+</span>
-      <div className="text-sm font-medium">Add your method</div>
-      <div className="text-xs muted">Point at your own Python scoring script</div>
-    </button>
-  );
-}
-
-const METHOD_COLOR_CHOICES = [
-  { key: "a", var: "var(--method-a)" }, { key: "b", var: "var(--method-b)" }, { key: "c", var: "var(--method-c)" },
-  { key: "d", var: "var(--method-d)" }, { key: "e", var: "var(--method-e)" }, { key: "f", var: "var(--method-f)" },
-  { key: "g", var: "var(--method-g)" }, { key: "h", var: "var(--method-h)" },
-];
-
-function AddMethodModal({ onClose, onSave, takenColors }) {
-  const [name, setName] = useState("");
-  const [path, setPath] = useState("");
-  const [entryFunction, setEntryFunction] = useState("score");
-  const [description, setDescription] = useState("");
-  // Same color "vibe" as the built-in methods, not a generic gray -- and
-  // default to whichever one nothing else is currently using yet, so two
-  // methods don't accidentally look identical at a glance.
-  const firstFree = METHOD_COLOR_CHOICES.find((c) => !takenColors.includes(c.var)) || METHOD_COLOR_CHOICES[0];
-  const [color, setColor] = useState(firstFree.var);
-  const canSave = name.trim() && path.trim();
-
-  return (
-    <div className="fixed inset-0 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.5)", zIndex: 60 }} onClick={onClose}>
-      <div className="card surf border p-5" style={{ width: "440px", maxWidth: "90vw" }} onClick={(e) => e.stopPropagation()}>
-        <div className="text-sm font-semibold mb-3">Add your method</div>
-        <div className="flex flex-col gap-3">
-          <div>
-            <div className="text-xs muted mb-1">Method name</div>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. MyResolver" className="w-full surf2 border b rounded-md text-sm px-3 py-2" style={{ color: "var(--text)" }} />
-          </div>
-          <div>
-            <div className="text-xs muted mb-1">Color</div>
-            <div className="flex items-center gap-2">
-              {METHOD_COLOR_CHOICES.map((c) => (
-                <button
-                  key={c.key} onClick={() => setColor(c.var)} title={takenColors.includes(c.var) ? "Already used by another method" : ""}
-                  className="rounded-full flex-shrink-0"
-                  style={{
-                    width: "22px", height: "22px", background: c.var,
-                    border: color === c.var ? "2px solid var(--text)" : "2px solid transparent",
-                    boxShadow: color === c.var ? "0 0 0 2px var(--surface)" : "none",
-                    opacity: takenColors.includes(c.var) && color !== c.var ? 0.35 : 1,
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs muted mb-1">Path to your Python file</div>
-            <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/methods/my_resolver.py" className="w-full surf2 border b rounded-md text-sm px-3 py-2 font-mono" style={{ color: "var(--text)" }} />
-          </div>
-          <div>
-            <div className="text-xs muted mb-1">Entry function (must accept source/candidate rows + params, return scores)</div>
-            <input value={entryFunction} onChange={(e) => setEntryFunction(e.target.value)} className="w-full surf2 border b rounded-md text-sm px-3 py-2 font-mono" style={{ color: "var(--text)" }} />
-          </div>
-          <div>
-            <div className="text-xs muted mb-1">Description (optional)</div>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="w-full surf2 border b rounded-md text-sm px-3 py-2" style={{ color: "var(--text)" }} />
-          </div>
-          <div className="text-xs muted">
-            Not executed yet: the backend does not load or run custom scripts. This entry is stored in your configuration package (path only, never the script contents) so it can be reviewed and wired up deliberately later.
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="btn btn-ghost text-sm font-medium px-3 py-1.5">Cancel</button>
-          <button
-            onClick={() => canSave && onSave({ name: name.trim(), path: path.trim(), entryFunction: entryFunction.trim() || "score", description: description.trim(), color })}
-            disabled={!canSave}
-            className="btn btn-primary text-sm font-medium px-3 py-1.5"
-            style={!canSave ? { opacity: 0.5, cursor: "not-allowed" } : {}}
-          >
-            Add method
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -1327,22 +1197,8 @@ function TabHierarchyMethods(props) {
     methodA, setMethodA, methodB, setMethodB, methodC, setMethodC, methodD, setMethodD, methodE, setMethodE,
     blockingFloor, setBlockingFloor, keepDigits, setKeepDigits, stripParens, setStripParens,
     stripSuffixWords, setStripSuffixWords, caseSensitive, setCaseSensitive, setActiveTab,
-    sourceFile, targetFile, setToast, customMethods, setCustomMethods,
+    sourceFile, targetFile, setToast,
   } = props;
-  const [addMethodOpen, setAddMethodOpen] = useState(false);
-
-  function addCustomMethod(m) {
-    setCustomMethods([...customMethods, { id: `custom_${Date.now()}`, version: 1, enabled: true, ...m }]);
-    setAddMethodOpen(false);
-    setToast(`Added "${m.name}". Saved to your config package only; the backend does not run custom scripts.`);
-  }
-  function toggleCustomMethod(id) {
-    setCustomMethods(customMethods.map((m) => (m.id === id ? { ...m, enabled: !m.enabled } : m)));
-  }
-  function removeCustomMethod(id, name) {
-    setCustomMethods(customMethods.filter((m) => m.id !== id));
-    setToast(`Removed "${name}".`);
-  }
 
   const chain = sourceHierarchy.length ? [...sourceHierarchy, "Match column"] : ["Level 1", "Level 2", "Level 3"];
   const maxRows = Math.max(sourceFile.rowCount || 0, targetFile.rowCount || 0);
@@ -1396,8 +1252,8 @@ function TabHierarchyMethods(props) {
       <div className="card surf border p-4">
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Confidence thresholds</div>
         <div className="grid grid-cols-2 gap-6">
-          <ThresholdSlider label="Auto-approve at" value={autoApprove} setValue={setAutoApprove} accent="var(--success-track)" />
-          <ThresholdSlider label="Needs-review floor" value={needsReview} setValue={setNeedsReview} accent="var(--warning-track)" />
+          <ThresholdSlider label="Auto-approve at" value={autoApprove} setValue={setAutoApprove} accent="var(--success)" />
+          <ThresholdSlider label="Needs-review floor" value={needsReview} setValue={setNeedsReview} accent="var(--warning)" />
         </div>
         {needsReview >= autoApprove && (
           <div className="mt-3 text-xs px-2.5 py-2 rounded-md" style={{ background: "var(--danger-soft)", color: "var(--danger)" }}>
@@ -1409,7 +1265,7 @@ function TabHierarchyMethods(props) {
       <div className="card surf border p-4">
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Advanced matching settings</div>
         <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-          <ThresholdSlider label="Hierarchy blocking floor" value={blockingFloor} setValue={setBlockingFloor} accent="var(--primary-track)" />
+          <ThresholdSlider label="Hierarchy blocking floor" value={blockingFloor} setValue={setBlockingFloor} accent="var(--primary)" />
           <div className="flex flex-col gap-2.5 justify-center">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -1460,8 +1316,8 @@ function TabHierarchyMethods(props) {
             enabled={methodB} onToggle={() => setMethodB(!methodB)}
           />
           <MethodCard
-            name={METHOD_META.C.label} engine="local sentence-embedding model" accent={METHOD_META.C.accent}
-            description="Semantic matching via a local sentence-transformers model, good for meaning gaps rather than spelling gaps. Needs the optional backend package (pip install -r relink-api/requirements-embedding.txt); the first run downloads the model once unless RELINK_EMBEDDING_MODEL points at a local folder."
+            name={METHOD_META.C.label} engine="linktransformer (embeddings)" accent={METHOD_META.C.accent}
+            description="Semantic matching, good for meaning gaps rather than spelling gaps."
             warning="Weak on close spelling variants. Can repeatedly collapse distinct records onto the same wrong neighbor. Recommended as a secondary signal, not primary."
             enabled={methodC} onToggle={() => setMethodC(!methodC)}
           />
@@ -1475,31 +1331,8 @@ function TabHierarchyMethods(props) {
             description="Learns how much weight each field should carry from your data instead of using a fixed similarity score. Worth it once you're linking tens of thousands of rows or more; for smaller runs, the methods above are simpler and just as effective."
             enabled={methodE} onToggle={() => setMethodE(!methodE)}
           />
-          {customMethods.map((m) => (
-            <MethodCard
-              key={m.id}
-              name={m.name} engine={`your script, v${m.version}`} accent={m.color || "var(--method-a)"}
-              description={m.description || "Custom method, no description given."}
-              warning="Saved in the config package only. The backend does not run custom scripts, so this has no effect on matching results."
-              enabled={m.enabled} onToggle={() => toggleCustomMethod(m.id)}
-              footer={
-                <div className="mt-3 flex items-center justify-between gap-2">
-                  <span className="text-xs muted font-mono truncate" title={m.path}>{m.path}</span>
-                  <button onClick={() => removeCustomMethod(m.id, m.name)} className="text-xs flex-shrink-0" style={{ color: "var(--danger)" }}>Remove</button>
-                </div>
-              }
-            />
-          ))}
-          <AddMethodCard onClick={() => setAddMethodOpen(true)} />
         </div>
       </div>
-      {addMethodOpen && (
-        <AddMethodModal
-          onClose={() => setAddMethodOpen(false)}
-          onSave={addCustomMethod}
-          takenColors={["var(--method-a)", "var(--method-b)", "var(--method-c)", "var(--method-d)", "var(--method-e)", ...customMethods.map((m) => m.color)]}
-        />
-      )}
     </div>
   );
 }
@@ -1809,7 +1642,7 @@ const PAGE_SIZE = 50;
 const METHOD_META = {
   A: { key: "A", label: "Fuzzy match", shortLabel: "Fuzzy", engine: "difflib", accent: "var(--method-a)" },
   B: { key: "B", label: "Token overlap", shortLabel: "Token overlap", engine: "recordlinkage approx.", accent: "var(--method-b)" },
-  C: { key: "C", label: "Semantic embedding", shortLabel: "Semantic", engine: "local sentence-embedding model", accent: "var(--method-c)" },
+  C: { key: "C", label: "Semantic embedding", shortLabel: "Semantic", engine: "linktransformer", accent: "var(--method-c)" },
   D: { key: "D", label: "Geometry check", shortLabel: "Geometry", engine: "geometry corroboration", accent: "var(--method-d)" },
   E: { key: "E", label: "Probabilistic (Splink)", shortLabel: "Probabilistic", engine: "Fellegi-Sunter", accent: "var(--method-e)" },
 };
@@ -2126,7 +1959,6 @@ function TabApproveFinalize(props) {
   const {
     rows, setToast, patchReviewRow, bulkReview, undoReview,
     pendingDecisions, setPendingDecisions, merged, setMerged, finalRows, setActiveTab, autoApprove,
-    saveEvalSet, setEvalSet,
   } = props;
   const [statusFilter, setStatusFilter] = useState("undecided");
   // A row that just got decided is held in view briefly so its green/red
@@ -2181,32 +2013,17 @@ function TabApproveFinalize(props) {
     timersRef.current.push(t1, t2);
   }
 
-  function logEvalDecision(r, decision, best) {
-    if (!saveEvalSet) return;
-    setEvalSet((prev) => [
-      ...prev,
-      {
-        source_id: r.sourceId, source_name: r.sourceName,
-        target_id: best.targetId, target_name: best.name,
-        decision, notes: "",
-        created_at: new Date().toISOString(),
-      },
-    ]);
-  }
-
   function approveRow(r) {
     const best = bestCandidate(r, candidateKeys);
     patchReviewRow(r.sourceId, { chosen_method: r.chosenMethod || best.key, approved: true });
     setPendingDecisions((prev) => ({ ...prev, [r.sourceId]: "approved" }));
     animateOut(r.sourceId, "approved");
-    logEvalDecision(r, "approve", best);
   }
 
   function rejectRow(r) {
     patchReviewRow(r.sourceId, { approved: false, chosen_method: null });
     setPendingDecisions((prev) => ({ ...prev, [r.sourceId]: "rejected" }));
     animateOut(r.sourceId, "rejected");
-    logEvalDecision(r, "reject", bestCandidate(r, candidateKeys));
   }
 
   async function approveAllConsensus() {
@@ -2419,10 +2236,7 @@ function TabApproveFinalize(props) {
                   <div className="text-sm font-medium mb-0.5">Approve everything at or above a score</div>
                   <div className="text-xs muted mb-2">starts from your Hierarchy &amp; methods threshold, dragging here won't change that setting</div>
                   <div className="flex items-center gap-3">
-                    <input
-                      type="range" min="0" max="100" value={thresholdPct} onChange={(e) => setThresholdPct(Number(e.target.value))}
-                      style={{ flex: 1, accentColor: "var(--primary)", "--track-fill": `linear-gradient(to right, var(--primary) 0%, var(--primary) ${thresholdPct}%, var(--border) ${thresholdPct}%, var(--border) 100%)` }}
-                    />
+                    <input type="range" min="0" max="100" value={thresholdPct} onChange={(e) => setThresholdPct(Number(e.target.value))} style={{ flex: 1 }} />
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <input
                         type="number" min="0" max="100" value={thresholdPct}
@@ -2582,7 +2396,7 @@ function CoverageBar({ label, value, total, color }) {
 }
 
 function TabExportAudit(props) {
-  const { finalRows, totalSourceRows, setToast, reviewRows, sourceGeometry, sourceGeometryRows, sourceIdCol, exportViaBackend, projectId, auditLog, fetchAuditLog, merged, setActiveTab, configName, setConfigName, configVersion, configId, onDownloadConfig, customMethods, methodA, methodB, methodC, methodD, methodE, runLog, saveEvalSet, setSaveEvalSet, evalSet, setEvalSet, pendingDecisions } = props;
+  const { finalRows, totalSourceRows, setToast, reviewRows, sourceGeometry, sourceGeometryRows, sourceIdCol, exportViaBackend, projectId, auditLog, fetchAuditLog, merged, setActiveTab } = props;
   const candidateKeys = enabledMethodKeys(props, { candidatesOnly: true });
   const [mode, setMode] = useState("replace");
   const [format, setFormat] = useState(null);
@@ -2769,66 +2583,6 @@ function TabExportAudit(props) {
           </table>
         </div>
       </div>
-
-      <div className="card surf border p-4">
-        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Configuration package</div>
-        <div className="flex items-center gap-3 mb-3">
-          <input
-            value={configName} onChange={(e) => setConfigName(e.target.value)}
-            className="surf2 border b rounded-md text-sm px-3 py-2 flex-1"
-            style={{ color: "var(--text)" }} placeholder="Name this configuration, e.g. Acme_Customer_Matching"
-          />
-          <span className="text-xs muted surf2 border b px-2 py-1.5 rounded-md flex-shrink-0">v{configVersion}</span>
-          <button onClick={onDownloadConfig} className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex-shrink-0">Download</button>
-        </div>
-        <div className="text-xs muted">
-          {configId} &middot; {customMethods.length} custom method(s) included &middot; settings only, never your actual source/target data.
-        </div>
-      </div>
-
-      {runLog.length > 0 && (
-        <div className="card surf border p-4">
-          <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">How this was produced</div>
-          <div className="flex flex-col gap-2">
-            {runLog.slice(0, 3).map((r) => (
-              <div key={r.run_id} className="surf2 border b rounded-md px-3 py-2.5 text-xs">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold font-mono">{r.run_id}</span>
-                  <span className="muted">{new Date(r.timestamp).toLocaleString()}</span>
-                </div>
-                <div className="muted">{r.config_name} v{r.config_version} &middot; {r.row_count} row(s) &middot; {r.methods.join(", ") || "no methods enabled"}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="card surf border p-4">
-        <div className="flex items-center justify-between mb-1">
-          <div className="text-xs font-semibold muted uppercase tracking-wide">Evaluation set</div>
-          <label className="text-xs muted flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" checked={saveEvalSet} onChange={(e) => setSaveEvalSet(e.target.checked)} />
-            Save my review decisions as labeled examples
-          </label>
-        </div>
-        <div className="text-sm muted mb-3">
-          Off by default: a review decision only becomes a labeled example if you turn this on. Nothing is saved as training data without you explicitly choosing to.
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs muted">{evalSet.length} labeled example(s) saved this session.</span>
-          <button
-            onClick={() => {
-              downloadFile("relink_evaluation_set.json", JSON.stringify(evalSet, null, 2), "application/json");
-              setToast("Downloaded relink_evaluation_set.json.");
-            }}
-            disabled={evalSet.length === 0}
-            className="btn btn-ghost text-xs font-medium px-3 py-1.5"
-            style={evalSet.length === 0 ? { opacity: 0.5, cursor: "not-allowed" } : {}}
-          >
-            Download evaluation set
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -2867,10 +2621,6 @@ export default function RelinkStudio() {
   const [methodC, setMethodC] = useState(false);
   const [methodD, setMethodD] = useState(false);
   const [methodE, setMethodE] = useState(false);
-  // Custom methods: {id, name, path, entryFunction, description, enabled, version}.
-  // Frontend-only for now, see the backend note for how a path here would
-  // actually get loaded, versioned, and run alongside A-E.
-  const [customMethods, setCustomMethods] = useState([]);
   const [blockingFloor, setBlockingFloor] = useState(0.60);
   const [keepDigits, setKeepDigits] = useState(true);
   const [stripParens, setStripParens] = useState(true);
@@ -2901,22 +2651,6 @@ export default function RelinkStudio() {
   // Backend run state: which project/job we're tracking, and whether a
   // run is currently in flight (drives the "Execute pipeline" button).
   const [projectId, setProjectId] = useState(null);
-  // Configuration packages: a name/version/id wrapper around the same
-  // settings object already sent to the backend, so a config file is a
-  // reproducible "recipe" (never the actual source/target data) that can
-  // be handed to another engineer. Bumped on every download, since that's
-  // the moment "what I'm sending someone" is fixed.
-  const [configName, setConfigName] = useState("Untitled configuration");
-  const [configVersion, setConfigVersion] = useState(1);
-  const [configId] = useState(() => `cfg_${Math.random().toString(36).slice(2, 10)}`);
-  // Run metadata: enough to answer "how was this result produced" later,
-  // without a full run-history UI. runLog is local-only for now (see the
-  // backend note); a real backend would persist this per project/run.
-  const [runLog, setRunLog] = useState([]);
-  // Ground-truth / evaluation sets: OFF by default on purpose. Only
-  // populated while the toggle is on, in Approve & finalize.
-  const [saveEvalSet, setSaveEvalSet] = useState(false);
-  const [evalSet, setEvalSet] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [auditLog, setAuditLog] = useState([]);
   // Skips the full flat checklist for anyone happy trusting the defaults:
@@ -3119,25 +2853,6 @@ export default function RelinkStudio() {
       setPendingDecisions({});
       setMerged(false);
 
-      // Run metadata: enough to answer "how was this result produced"
-      // later, without a full run-history UI. Local only for now, a real
-      // backend would persist this per project.
-      const activeMethods = [
-        methodA && METHOD_META.A.label, methodB && METHOD_META.B.label, methodC && METHOD_META.C.label,
-        methodD && METHOD_META.D.label, methodE && METHOD_META.E.label,
-      ].filter(Boolean);  // custom methods are deliberately excluded: the backend never ran them
-      setRunLog((prev) => [
-        {
-          run_id: `run_${prev.length + 1}`,
-          project_id: project.id,
-          config_name: configName, config_version: configVersion,
-          methods: activeMethods,
-          row_count: rows.length,
-          timestamp: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-
       if (fastMode) {
         // Same "safe to bulk" definition as the Approve & finalize triage
         // panel: full method agreement, not a collision, score at or above
@@ -3301,7 +3016,7 @@ export default function RelinkStudio() {
         file: s.file.name, file_id: s.file.fileId,
         id_column: s.idCol, match_column: s.matchCol, hierarchy: s.hierarchy,
       })) : [],
-      methods: [methodA && "fuzzy", methodB && "recordlinkage", methodD && "geometry_corroboration", methodE && "splink", methodC && "embedding"].filter(Boolean),
+      methods: [methodA && "fuzzy", methodB && "recordlinkage", methodD && "geometry_corroboration", methodE && "splink"].filter(Boolean),
       thresholds: { auto_approve: autoApprove, needs_review: needsReview },
       matching: { blocking_floor: blockingFloor, keep_digits: keepDigits, strip_parentheticals: stripParens, strip_suffix_words: stripSuffixWords, case_sensitive: caseSensitive },
       safety: { collision_guard: collisionGuard, auto_downgrade_ties: autoDowngradeTies, require_hierarchy_match: requireHierarchyMatch, strict_zone_match: strictZoneMatch, flag_low_coverage_zones: flagLowCoverageZones },
@@ -3309,31 +3024,10 @@ export default function RelinkStudio() {
     };
   }
 
-  function buildConfigPackage() {
-    // Configuration, not data: only settings, column names, and file
-    // names/paths ever go in here, never actual row contents, and never
-    // credentials. custom_methods carries a path reference to the
-    // engineer's own script, not the script's contents.
-    return {
-      relink_config: true,
-      name: configName,
-      version: configVersion,
-      config_id: configId,
-      created_at: new Date().toISOString(),
-      relink_version: RELINK_VERSION,
-      custom_methods: customMethods.map((m) => ({
-        name: m.name, path: m.path, entry_function: m.entryFunction, description: m.description, enabled: m.enabled, version: m.version,
-      })),
-      settings: buildConfigObject(),
-    };
-  }
-
   function handleDownloadConfig() {
-    const pkg = buildConfigPackage();
-    const fileSlug = configName.trim().replace(/\s+/g, "_").replace(/[^\w-]/g, "") || "relink_studio_config";
-    downloadFile(`${fileSlug}_v${configVersion}.json`, JSON.stringify(pkg, null, 2), "application/json");
-    setToast(`Downloaded ${fileSlug}_v${configVersion}.json. Anyone can upload this to reproduce your exact setup (never your actual data).`);
-    setConfigVersion((v) => v + 1);
+    const config = buildConfigObject();
+    downloadFile("relink_studio_config.json", JSON.stringify(config, null, 2), "application/json");
+    setToast("Downloaded relink_studio_config.json. Anyone can upload this to load your exact setup.");
   }
 
   function handleUploadConfig(e) {
@@ -3342,22 +3036,7 @@ export default function RelinkStudio() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const raw = JSON.parse(reader.result);
-        // Backward compatible: an older, unwrapped flat config still loads
-        // fine, it just arrives with no name/version/custom methods of
-        // its own.
-        const isPackage = raw && raw.relink_config === true;
-        const c = isPackage ? raw.settings : raw;
-        if (isPackage) {
-          setConfigName(raw.name || "Untitled configuration");
-          setConfigVersion(typeof raw.version === "number" ? raw.version : 1);
-          if (Array.isArray(raw.custom_methods)) {
-            setCustomMethods(raw.custom_methods.map((m, i) => ({
-              id: `custom_${Date.now()}_${i}`, name: m.name, path: m.path, entryFunction: m.entry_function || "score",
-              description: m.description || "", enabled: !!m.enabled, version: m.version || 1,
-            })));
-          }
-        }
+        const c = JSON.parse(reader.result);
         if (c.source) {
           setSourceIdCol(c.source.id_column ?? sourceIdCol);
           setSourceMatchCol(c.source.match_column ?? sourceMatchCol);
@@ -3387,7 +3066,6 @@ export default function RelinkStudio() {
           setMethodB(c.methods.includes("recordlinkage"));
           setMethodD(c.methods.includes("geometry_corroboration"));
           setMethodE(c.methods.includes("splink"));
-          setMethodC(c.methods.includes("embedding"));
         }
         if (c.thresholds) {
           setAutoApprove(c.thresholds.auto_approve ?? autoApprove);
@@ -3408,7 +3086,7 @@ export default function RelinkStudio() {
           setFlagLowCoverageZones(c.safety.flag_low_coverage_zones ?? flagLowCoverageZones);
         }
         if (c.output) setSortOutputBy(c.output.sort_by ?? sortOutputBy);
-        setToast(isPackage ? `Loaded "${raw.name}" v${raw.version}. Setup now matches that configuration.` : `Loaded configuration from ${file.name}. Setup now matches the file you uploaded.`);
+        setToast(`Loaded configuration from ${file.name}. Setup now matches the file you uploaded.`);
       } catch (err) {
         setToast(`Could not read ${file.name}: not a valid ReLink Studio config file.`);
       }
@@ -3423,7 +3101,6 @@ export default function RelinkStudio() {
     shape, setShape, chainSteps, setChainSteps,
     autoApprove, setAutoApprove, needsReview, setNeedsReview, methodA, setMethodA, methodB, setMethodB, methodC, setMethodC, methodD, setMethodD, methodE, setMethodE,
     blockingFloor, setBlockingFloor, keepDigits, setKeepDigits, stripParens, setStripParens, stripSuffixWords, setStripSuffixWords, caseSensitive, setCaseSensitive,
-    customMethods, setCustomMethods,
     collisionGuard, setCollisionGuard, allowManyToOne, setAllowManyToOne, excludePattern, setExcludePattern,
     typeColumn, setTypeColumn, typeExpected, setTypeExpected, strictZoneMatch, setStrictZoneMatch,
     autoDowngradeTies, setAutoDowngradeTies, requireHierarchyMatch, setRequireHierarchyMatch,
@@ -3434,8 +3111,6 @@ export default function RelinkStudio() {
     setToast, setActiveTab,
     projectId, patchReviewRow, bulkReview, undoReview, geocodeLookup,
     exportViaBackend, auditLog, fetchAuditLog,
-    configName, setConfigName, configVersion, configId, onDownloadConfig: handleDownloadConfig,
-    runLog, saveEvalSet, setSaveEvalSet, evalSet, setEvalSet,
   };
 
   // What has to be true before "Continue" is allowed to move off the current tab.
