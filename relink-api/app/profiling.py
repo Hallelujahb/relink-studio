@@ -72,7 +72,6 @@ def profile_column(values, column_name=""):
     duplicate_count = max(0, len(non_blank) - distinct)
 
     numeric_vals = [float(v) for v in non_blank if _looks_numeric(v)]
-    invalid_numeric = 0  # only counted when caller asserts this column IS numeric; see note below
     date_like = sum(1 for v in non_blank if _looks_date(v))
     bool_like = sum(1 for v in non_blank if _looks_bool(v))
 

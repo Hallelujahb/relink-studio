@@ -1,4 +1,4 @@
-"""Regression tests for the security/consistency fixes in apply_fixes.py."""
+"""Regression tests for the embedding method, registration, global auth and cleanup safety."""
 import os
 
 import numpy as np

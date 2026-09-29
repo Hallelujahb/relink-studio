@@ -15,6 +15,9 @@ import * as XLSX from "xlsx";
 
 function defaultApiBase() {
   if (typeof window !== "undefined" && window.location && window.location.hostname) {
+    // The built app is served by the backend, so same origin. The Vite dev
+    // server runs on another port and still talks to the backend on 5000.
+    if (import.meta.env && import.meta.env.PROD) return `${window.location.origin}/api`;
     return `http://${window.location.hostname}:5000/api`;
   }
   return "http://localhost:5000/api";
@@ -27,6 +30,7 @@ const _conn = {
 
 function getApiBase() { return _conn.base; }
 function setApiBase(base) {
+  if (base !== _conn.base) setAuthToken(null);
   _conn.base = base;
   try { localStorage.setItem("relink_api_base", base); } catch { /* private browsing, etc. */ }
 }
@@ -156,9 +160,10 @@ const TOKENS_CSS = `
   }
   .rls { background: var(--bg); color: var(--text); }
   .rls[data-theme="light"] .topbar-tint { background: var(--surface); }
-  .rls[data-theme="dark"] .topbar-tint { background: linear-gradient(100deg, #16213F 0%, #262244 50%, #3A2F52 100%); }
+  .rls[data-theme="dark"] .topbar-tint { background: var(--surface); }
   .rls[data-theme="light"] .chrome-bar { background: var(--surface); }
-  .rls[data-theme="dark"] .chrome-bar { background: linear-gradient(90deg, #161A24 0%, #1A1F2B 50%, #1E2433 100%); }
+  .rls[data-theme="dark"] .chrome-bar { background: var(--surface); }
+  .rls .footer-bar { background: var(--bg); }
   .rls[data-theme="dark"] .shape-active { background: var(--primary-soft); }
   .rls[data-theme="light"] .shape-active { background: var(--primary-soft); }
   .surf { background: var(--surface); border-color: var(--border); }
@@ -544,7 +549,7 @@ function NavFooter({ activeTab, setActiveTab, canContinue = true, continueLabel,
   // scrollable tab content (see the root layout below) so it never moves.
   return (
     <div
-      className="surf chrome-bar border-t b flex items-center justify-between px-5 py-1.5"
+      className="surf footer-bar border-t b flex items-center justify-between px-5 py-1.5"
       style={{ flexShrink: 0, position: "sticky", bottom: 0, zIndex: 30 }}
     >
       <div>
@@ -669,25 +674,9 @@ function parseUploadedFile(file, onParsed, onError) {
 }
 
 /* ---------------------------------------------------------------------- */
-/* Spatial preview: renders real geometry when available, otherwise a    */
-/* seeded illustrative shape so the panel is never just a blank label.   */
+/* Spatial preview: draws the real geometry, or says there is none.      */
+/*                                                                        */
 /* ---------------------------------------------------------------------- */
-
-function seededPolygon(seedStr, n = 7) {
-  let seed = 0;
-  for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0;
-  function rand() {
-    seed = (seed * 1103515245 + 12345) >>> 0;
-    return seed / 4294967296;
-  }
-  const points = [];
-  for (let i = 0; i < n; i++) {
-    const angle = (i / n) * Math.PI * 2;
-    const radius = 28 + rand() * 14;
-    points.push([50 + Math.cos(angle) * radius, 50 + Math.sin(angle) * radius]);
-  }
-  return points.map((p) => p.join(",")).join(" ");
-}
 
 function geometryToViewboxPoints(geometry) {
   let ring = null;
@@ -711,30 +700,24 @@ function geometryToViewboxPoints(geometry) {
     .join(" ");
 }
 
-function SpatialPreview({ sourceId, sourceName, realGeometry }) {
-  const realPoints = realGeometry ? geometryToViewboxPoints(realGeometry) : null;
-  const points = realPoints || seededPolygon(sourceId + sourceName);
-  const isReal = !!realPoints;
+function SpatialPreview({ realGeometry }) {
+  const points = realGeometry ? geometryToViewboxPoints(realGeometry) : null;
+  if (!points) {
+    return (
+      <div className="text-xs muted text-center py-6">
+        No polygon to draw. Upload a GeoJSON source with polygon geometry to see it here.
+      </div>
+    );
+  }
   return (
     <div>
       <svg viewBox="0 0 100 100" className="w-full h-32">
         <polygon points={points} fill="var(--primary-soft)" stroke="var(--primary)" strokeWidth="1.2" />
       </svg>
-      <div className="text-xs muted mt-2 text-center">
-        {isReal ? "Rendered from the uploaded geometry" : "Illustrative shape. Upload a geojson source in Tab 1 to render the real polygon here"}
-      </div>
+      <div className="text-xs muted mt-2 text-center">Rendered from the uploaded geometry</div>
     </div>
   );
 }
-
-/* ---------------------------------------------------------------------- */
-/* Review/approval/audit data. Populated by running the pipeline against  */
-/* the files the user uploads -- nothing here is seeded or pre-filled.    */
-/* ---------------------------------------------------------------------- */
-
-const REVIEW_ROWS = [];
-const ALREADY_APPROVED = [];
-const AUDIT_LOG = [];
 
 /* ---------------------------------------------------------------------- */
 /* Tab 1: Sources & shape                                                */
@@ -1020,16 +1003,16 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
               </>
             )}
             <label className="btn btn-ghost text-xs font-medium px-3 py-1.5 mt-3" style={isParsing ? { opacity: 0.5, pointerEvents: "none" } : {}}>
-              {isParsing ? "Parsing..." : "Upload file"}
+              {isParsing ? "Parsing..." : (file.fileId ? "Change file" : "Upload file")}
               <input type="file" accept=".csv,.xlsx,.xls,.geojson,.json" onChange={handleUpload} className="hidden" disabled={isParsing} />
             </label>
             <button
               type="button"
               onClick={() => setMode("db")}
               className="text-xs mt-3"
-              style={{ border: "none", background: "none", padding: 0, textDecoration: "underline", color: "var(--text-muted)" }}
+              style={{ border: "none", background: "none", padding: 0, textDecoration: "underline", color: "var(--text-muted)", opacity: file.fileId ? 0.7 : 1 }}
             >
-              Or import a table from Postgres / ClickHouse / MySQL
+              {file.fileId ? "Or replace with a table from Postgres / ClickHouse / MySQL" : "Or import a table from Postgres / ClickHouse / MySQL"}
             </button>
           </>
         )}
@@ -1206,8 +1189,10 @@ function MethodCard({ name, engine, description, warning, enabled, onToggle, acc
     <div
       className="card border p-4"
       style={{
-        background: enabled ? `color-mix(in srgb, ${accent} 16%, transparent)` : "color-mix(in srgb, var(--surface-2) 55%, transparent)",
+        background: "var(--surface)",
         borderColor: enabled ? accent : "var(--border)",
+        borderLeftWidth: "4px",
+        borderLeftColor: enabled ? accent : "var(--border)",
       }}
     >
       <div className="flex items-start justify-between mb-2">
@@ -1517,6 +1502,8 @@ function TabSafetyRules(props) {
     sortOutputBy, setSortOutputBy, setActiveTab,
   } = props;
 
+  const [selectedPreset, setSelectedPreset] = useState(null);
+
   const patternValid = useMemo(() => {
     if (!excludePattern.trim()) return true;
     try {
@@ -1533,6 +1520,7 @@ function TabSafetyRules(props) {
     loose: { collisionGuard: false, allowManyToOne: true, autoDowngradeTies: false, requireHierarchyMatch: false, strictZoneMatch: false, flagLowCoverageZones: false },
   };
   function applySafetyPreset(name) {
+    setSelectedPreset(name);
     const p = SAFETY_PRESETS[name];
     setCollisionGuard(p.collisionGuard);
     setAllowManyToOne(p.allowManyToOne);
@@ -1547,9 +1535,9 @@ function TabSafetyRules(props) {
       <div className="card surf border p-4">
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Quick preset</div>
         <div className="flex gap-3">
-          <ShapeOption label="Strict" description="Every safeguard on. Slower to reach full coverage, fewest false positives." active={false} onClick={() => applySafetyPreset("strict")} diagram="most caution" />
-          <ShapeOption label="Balanced" description="A sensible default: collision guard and hierarchy checks on, exact zone matching off." active={false} onClick={() => applySafetyPreset("balanced")} diagram="the defaults below" />
-          <ShapeOption label="Loose" description="Minimal friction, trusts the name match more than the surrounding rules. More coverage, more to double-check." active={false} onClick={() => applySafetyPreset("loose")} diagram="least caution" />
+          <ShapeOption label="Strict" description="Every safeguard on. Slower to reach full coverage, fewest false positives." active={selectedPreset === "strict"} onClick={() => applySafetyPreset("strict")} diagram="most caution" />
+          <ShapeOption label="Balanced" description="A sensible default: collision guard and hierarchy checks on, exact zone matching off." active={selectedPreset === "balanced"} onClick={() => applySafetyPreset("balanced")} diagram="the defaults below" />
+          <ShapeOption label="Loose" description="Minimal friction, trusts the name match more than the surrounding rules. More coverage, more to double-check." active={selectedPreset === "loose"} onClick={() => applySafetyPreset("loose")} diagram="least caution" />
         </div>
         <div className="text-xs muted mt-3">Just sets the toggles below to a starting combination, feel free to fine-tune any of them afterward.</div>
       </div>
@@ -2890,8 +2878,8 @@ export default function RelinkStudio() {
   const [sortOutputBy, setSortOutputBy] = useState("score_desc");
 
   // Tab 4 state
-  const [reviewRows, setReviewRows] = useState(REVIEW_ROWS);
-  const [reviewSelectedId, setReviewSelectedId] = useState(REVIEW_ROWS[0]?.sourceId ?? null);
+  const [reviewRows, setReviewRows] = useState([]);
+  const [reviewSelectedId, setReviewSelectedId] = useState(null);
   const [reviewNote, setReviewNote] = useState("");
 
   // Tab 5 state
@@ -3185,7 +3173,7 @@ export default function RelinkStudio() {
     const before = reviewRows;
     setReviewRows((prev) => prev.map((r) => (r.sourceId === sourceId ? { ...r, ...patch } : r)));
     try {
-      const res = await apiJson(`/projects/${projectId}/review/${sourceId}`, { method: "PATCH", body: JSON.stringify(patch) });
+      const res = await apiJson(`/projects/${projectId}/review/${encodeURIComponent(sourceId)}`, { method: "PATCH", body: JSON.stringify(patch) });
       setReviewRows((prev) => prev.map((r) => (r.sourceId === sourceId ? transformReviewRow(res.row) : r)));
     } catch (e) {
       setReviewRows(before);
@@ -3278,7 +3266,7 @@ export default function RelinkStudio() {
         const m = bestCandidate(r, candidateKeys);
         return { sourceId: r.sourceId, sourceName: r.sourceName, target: m.name, targetId: m.targetId };
       });
-    return [...ALREADY_APPROVED, ...fromReview, ...fromPending].sort((a, b) => Number(a.sourceId) - Number(b.sourceId));
+    return [...fromReview, ...fromPending].sort((a, b) => Number(a.sourceId) - Number(b.sourceId));
   }, [reviewRows, pendingDecisions, methodA, methodB, methodC, methodD, methodE]);
 
   function buildConfigObject() {

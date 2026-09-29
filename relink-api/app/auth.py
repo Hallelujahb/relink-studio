@@ -1,22 +1,18 @@
 """
-Basic multi-user auth. Deliberately simple: username + password with
-werkzeug's hashing (already a Flask dependency, no new heavy dep), opaque
-bearer tokens stored in a `sessions` table with an expiry, and two roles:
+Username and password auth with opaque bearer tokens and two roles,
 "reviewer" (default) and "lead".
 
-Whether auth is globally required is NOT a module-level constant -- it's
-resolved by app/config.py (RELINK_MODE, defaulting auth on in "lan" mode
-and off in "local" mode) and stored on the Flask app as
-app.config["RELINK_REQUIRE_AUTH"]. require_auth() below reads it from
-current_app at request time so it responds to the actual app config
-instead of a value frozen at import time.
+Whether auth is required is decided in app/config.py and stored on the Flask
+app as RELINK_REQUIRE_AUTH. It is read per request, not frozen at import.
 
-Approval hierarchy: when a project's config.safety.require_approval_hierarchy
-is true, a non-"lead" user can only *submit* a review row (POST .../submit);
-only a "lead" user can *approve* a submitted row (POST .../approve). Without
-that config flag, the original single-step PATCH .../review/{id} still
-works for anyone.
+Tokens are only ever stored as a SHA-256 hash, so a copy of the database does
+not hand out working sessions.
+
+Approval hierarchy: when a project sets safety.require_approval_hierarchy,
+rows are submitted by anyone and approved by a lead, and never by the person
+who submitted them.
 """
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -33,6 +29,14 @@ def _uid():
     return uuid.uuid4().hex[:12]
 
 
+def _hash_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
 def register_user(username, password, role="reviewer"):
     if role not in ("reviewer", "lead"):
         raise ValueError("role must be 'reviewer' or 'lead'")
@@ -42,7 +46,7 @@ def register_user(username, password, role="reviewer"):
     user_id = _uid()
     conn.execute(
         "INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?,?,?,?,?)",
-        (user_id, username, generate_password_hash(password), role, datetime.now(timezone.utc).isoformat()),
+        (user_id, username, generate_password_hash(password), role, _now().isoformat()),
     )
     conn.commit()
     return {"id": user_id, "username": username, "role": role}
@@ -53,65 +57,88 @@ def login(username, password):
     user = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
     if not user or not check_password_hash(user["password_hash"], password):
         return None
-    token = uuid.uuid4().hex
-    expires_at = (datetime.now(timezone.utc) + timedelta(hours=SESSION_LIFETIME_HOURS)).isoformat()
+    conn.execute("DELETE FROM sessions WHERE expires_at < ?", (_now().isoformat(),))
+    token = uuid.uuid4().hex + uuid.uuid4().hex
+    expires_at = (_now() + timedelta(hours=SESSION_LIFETIME_HOURS)).isoformat()
     conn.execute(
         "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)",
-        (token, user["id"], datetime.now(timezone.utc).isoformat(), expires_at),
+        (_hash_token(token), user["id"], _now().isoformat(), expires_at),
     )
     conn.commit()
     return {"token": token, "username": user["username"], "role": user["role"], "expires_at": expires_at}
+
+
+def logout(token):
+    conn = get_conn()
+    conn.execute("DELETE FROM sessions WHERE token=?", (_hash_token(token),))
+    conn.commit()
 
 
 def _resolve_token(token):
     if not token:
         return None
     conn = get_conn()
+    hashed = _hash_token(token)
     row = conn.execute(
         "SELECT s.token, s.expires_at, u.id as user_id, u.username, u.role "
         "FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token=?",
-        (token,),
+        (hashed,),
     ).fetchone()
     if not row:
         return None
-    if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
-        conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+    if datetime.fromisoformat(row["expires_at"]) < _now():
+        conn.execute("DELETE FROM sessions WHERE token=?", (hashed,))
         conn.commit()
         return None
     return {"id": row["user_id"], "username": row["username"], "role": row["role"]}
 
 
+def bearer_token():
+    header = request.headers.get("Authorization", "")
+    return header[7:] if header.startswith("Bearer ") else None
+
+
 def get_current_user():
-    """Resolves the caller from an `Authorization: Bearer <token>` header.
-    Returns None (not an error) when there's no/invalid token -- callers
-    decide whether that's acceptable via @require_auth or by checking g.user."""
+    """The caller from an `Authorization: Bearer <token>` header, or None."""
     if not hasattr(g, "_relink_user_resolved"):
-        auth_header = request.headers.get("Authorization", "")
-        token = auth_header[7:] if auth_header.startswith("Bearer ") else None
-        g.user = _resolve_token(token)
+        g.user = _resolve_token(bearer_token())
         g._relink_user_resolved = True
     return g.user
 
 
+_AUTH_HINT = "Authentication required. Send 'Authorization: Bearer <token>' from POST /api/auth/login."
+
+
 def require_auth(role=None):
-    """Decorator. Always resolves g.user from the token if present. Only
-    *rejects* the request if this app's config.RELINK_REQUIRE_AUTH is
-    True (set by app/config.py from RELINK_MODE / RELINK_REQUIRE_AUTH),
-    or if `role` is given and the resolved user doesn't have it (role
-    check implies auth required for that route regardless of the global
-    flag, since a role check without a real user makes no sense)."""
+    """Rejects the request when auth is required globally, or when a role is
+    asked for (a role check is meaningless without a real user)."""
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             user = get_current_user()
-            require_auth_globally = current_app.config.get("RELINK_REQUIRE_AUTH", False)
-            if (require_auth_globally or role) and not user:
-                return jsonify({"error": "Authentication required. Send 'Authorization: Bearer <token>' from POST /api/auth/login."}), 401
+            needed = current_app.config.get("RELINK_REQUIRE_AUTH", False) or role
+            if needed and not user:
+                return jsonify({"error": _AUTH_HINT}), 401
             if role and user and user["role"] != role:
                 return jsonify({"error": f"This action requires the '{role}' role; you are '{user['role']}'."}), 403
             return fn(*args, **kwargs)
         return wrapper
     return decorator
+
+
+def require_lead_when_auth(fn):
+    """Lead only once logins are on. On a single machine with auth off there is
+    only one user, so the check is skipped."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if current_app.config.get("RELINK_REQUIRE_AUTH"):
+            user = get_current_user()
+            if not user:
+                return jsonify({"error": _AUTH_HINT}), 401
+            if user["role"] != "lead":
+                return jsonify({"error": "This action requires the 'lead' role."}), 403
+        return fn(*args, **kwargs)
+    return wrapper
 
 
 def actor_name():

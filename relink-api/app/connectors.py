@@ -16,7 +16,7 @@ outside the host the API process runs on -- Postgres/ClickHouse are
 expected to be on localhost or the private LAN, exactly like the existing
 Flask<->frontend setup.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 import re
 
@@ -44,7 +44,8 @@ def quote_identifier(name: str, quote_char: str = '"') -> str:
 
 
 def build_select_query(table: str, columns: Optional[list] = None, schema: Optional[str] = None,
-                        quote_char: str = '"', limit: Optional[int] = None, offset: Optional[int] = None) -> str:
+                        quote_char: str = '"', limit: Optional[int] = None, offset: Optional[int] = None,
+                        order_by_first_column: bool = False) -> str:
     """Builds a read-only SELECT with every identifier validated and
     quoted -- never string-formats raw user input into the query."""
     table_ref = quote_identifier(table, quote_char)
@@ -52,26 +53,13 @@ def build_select_query(table: str, columns: Optional[list] = None, schema: Optio
         table_ref = f"{quote_identifier(schema, quote_char)}.{table_ref}"
     col_ref = "*" if not columns else ", ".join(quote_identifier(c, quote_char) for c in columns)
     query = f"SELECT {col_ref} FROM {table_ref}"
+    if order_by_first_column:
+        query += " ORDER BY 1"  # offset paging needs a stable order
     if limit is not None:
         query += f" LIMIT {int(limit)}"
     if offset is not None:
         query += f" OFFSET {int(offset)}"
     return query
-
-
-def chunk_offsets(total_rows: int, chunk_size: int) -> list:
-    """Pure helper: the (offset, size) pairs a chunked extraction will
-    read, without touching any database. size < chunk_size on the last
-    chunk when total_rows doesn't divide evenly."""
-    if total_rows <= 0 or chunk_size <= 0:
-        return []
-    offsets = []
-    offset = 0
-    while offset < total_rows:
-        size = min(chunk_size, total_rows - offset)
-        offsets.append((offset, size))
-        offset += size
-    return offsets
 
 
 def redact_connection_config(config: dict) -> dict:
@@ -95,9 +83,7 @@ class ConnectionConfig:
     password: Optional[str] = None
     schema: Optional[str] = None
     table: Optional[str] = None
-    read_only: bool = True
     ssl: bool = False
-    extra: dict = field(default_factory=dict)
 
     def validate(self):
         errors = []
@@ -235,7 +221,7 @@ class PostgresProvider(BaseProvider):
                     (self.config.table,),
                 )
                 row = cur.fetchone()
-                return int(row[0]) if row and row[0] is not None else None
+                return int(row[0]) if row and row[0] is not None and row[0] >= 0 else None
         finally:
             conn.close()
 
@@ -255,7 +241,7 @@ class PostgresProvider(BaseProvider):
                 if cancel_token is not None and cancel_token.is_set():
                     return
                 query = build_select_query(self.config.table, schema=self.config.schema,
-                                            limit=chunk_size, offset=offset)
+                                            limit=chunk_size, offset=offset, order_by_first_column=True)
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(query)
                     rows = [dict(r) for r in cur.fetchall()]
@@ -452,7 +438,7 @@ class MySQLProvider(BaseProvider):
             )
             row = cur.fetchone()
             cur.close()
-            return int(row[0]) if row and row[0] is not None else None
+            return int(row[0]) if row and row[0] is not None and row[0] >= 0 else None
         finally:
             conn.close()
 
@@ -470,7 +456,7 @@ class MySQLProvider(BaseProvider):
                 # double quotes, unless ANSI_QUOTES sql_mode is set) --
                 # pass quote_char explicitly rather than relying on
                 # build_select_query's Postgres-flavored default.
-                query = build_select_query(self.config.table, limit=chunk_size, offset=offset, quote_char="`")
+                query = build_select_query(self.config.table, limit=chunk_size, offset=offset, quote_char="`", order_by_first_column=True)
                 cur.execute(query)
                 rows = cur.fetchall()
                 cur.close()

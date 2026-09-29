@@ -75,8 +75,14 @@ def method_e_splink(source_rows, target_rows, source_id_col, source_match_col,
         # the whole method -- still produces a real (if rougher) ranking.
         calibrated = False
 
-    predictions = linker.inference.predict(threshold_match_probability=max(blocking_floor, 0.01))
-    df = predictions.as_pandas_dataframe()
+    try:
+        predictions = linker.inference.predict(threshold_match_probability=max(blocking_floor, 0.01))
+        df = predictions.as_pandas_dataframe()
+    except Exception as e:
+        # A bad query or an internal Splink/DuckDB error here used to fail the
+        # whole run. Treated the same as "the package isn't installed": a
+        # warning, and the run finishes without Method E.
+        raise SplinkUnavailable(f"Splink failed while linking these files: {e}") from e
 
     results = {}
     if not df.empty:

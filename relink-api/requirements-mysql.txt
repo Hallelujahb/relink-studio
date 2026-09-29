@@ -1,0 +1,3 @@
+# MySQL and MariaDB import. Kept apart because mysql-connector-python is GPLv2
+# with a FOSS exception, unlike everything else here.
+mysql-connector-python

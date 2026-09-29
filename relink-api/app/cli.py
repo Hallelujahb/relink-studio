@@ -13,9 +13,17 @@ def main():
 
     cfg = app.config["RELINK_CONFIG"]
     cfg.print_banner()
-    app.run(host=cfg.host, port=cfg.port, debug=cfg.debug)
+
+    if cfg.debug:
+        app.run(host=cfg.host, port=cfg.port, debug=True)
+        return
+    try:
+        from waitress import serve
+    except ImportError:
+        app.run(host=cfg.host, port=cfg.port, debug=False, threaded=True)
+        return
+    serve(app, host=cfg.host, port=cfg.port, threads=8)
 
 
 if __name__ == "__main__":
     main()
-

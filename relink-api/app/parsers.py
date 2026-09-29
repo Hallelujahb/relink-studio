@@ -1,12 +1,7 @@
 """
-Server-side equivalent of the frontend's parseUploadedFile(). The frontend
-version only inspects a file to preview columns/row count; this version
-also returns the full row data, since the matching engine needs it.
-
-Known Excel quirk handled here: naive `sheet_to_json(sheet, {header: 1})`-
-style parsing counts trailing blank rows that Excel often leaves inside a
-sheet's used range. Any row that is entirely empty/NaN is dropped before
-counting or matching against it.
+Reads uploaded files into {"columns", "rows", "row_count", "format", "geometry"}.
+Rows that are entirely empty are dropped, since Excel often leaves formatted
+blank rows inside a sheet's used range.
 """
 import json
 import os
@@ -18,9 +13,11 @@ class ParseError(ValueError):
     pass
 
 
+_CSV_ENCODINGS = ("utf-8-sig", "cp1252", "latin-1")
+
+
 def parse_file(path, original_filename):
     ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
-
     if ext == "csv":
         return _parse_csv(path)
     if ext in ("xlsx", "xls"):
@@ -31,24 +28,29 @@ def parse_file(path, original_filename):
 
 
 def _clean_rows(df):
-    df = df.dropna(how="all")
-    df = df.where(pd.notnull(df), None)
-    return df
+    df = df.dropna(how="all").astype(object)
+    return df.where(pd.notnull(df), None)
 
 
-def _raw_header_duplicates(path, read_header_fn):
-    """pandas silently renames a repeated header ("name" -> "name.1")
-    during the real read, so checking df.columns afterwards can never see
-    the collision that actually happened in the file. Read just the raw
-    header row first and check it before pandas gets a chance to paper
-    over it."""
+def _read_csv(path, **kwargs):
+    """Excel on Windows often exports cp1252, so fall back before giving up."""
+    for encoding in _CSV_ENCODINGS:
+        try:
+            return pd.read_csv(path, encoding=encoding, **kwargs)
+        except UnicodeDecodeError:
+            continue
+    raise ParseError("Could not decode this CSV. Save it as UTF-8 and try again.")
+
+
+def _raw_header_duplicates(read_header_fn):
+    """pandas quietly renames a repeated header ("name" to "name.1") while
+    reading, so the collision has to be checked on the raw header row first."""
     try:
-        raw_columns = list(read_header_fn())
+        raw = list(read_header_fn())
     except Exception:
         return []
-    seen = set()
-    dupes = set()
-    for c in raw_columns:
+    seen, dupes = set(), set()
+    for c in raw:
         if c in seen:
             dupes.add(c)
         seen.add(c)
@@ -56,43 +58,37 @@ def _raw_header_duplicates(path, read_header_fn):
 
 
 def _parse_csv(path):
-    dupes = _raw_header_duplicates(path, lambda: pd.read_csv(path, header=None, nrows=1, dtype=str).iloc[0].tolist())
+    dupes = _raw_header_duplicates(lambda: _read_csv(path, header=None, nrows=1, dtype=str).iloc[0].tolist())
     if dupes:
         raise ParseError(f"Duplicate column header(s): {', '.join(dupes)}. Rename them before uploading.")
-
     try:
-        df = pd.read_csv(path, dtype=str, keep_default_na=True)
+        df = _read_csv(path, dtype=str, keep_default_na=True)
+    except ParseError:
+        raise
     except pd.errors.EmptyDataError:
         raise ParseError("File is empty.")
     except Exception as e:
         raise ParseError(f"Could not read this as CSV ({e}).")
-
     if df.shape[1] == 0:
         raise ParseError("No header row found, the first line should be column names.")
-
     df = _clean_rows(df)
-    columns = list(df.columns)
-    rows = df.to_dict(orient="records")
-    return {"columns": columns, "rows": rows, "row_count": len(rows), "format": "csv", "geometry": None}
+    return {"columns": list(df.columns), "rows": df.to_dict(orient="records"),
+            "row_count": len(df), "format": "csv", "geometry": None}
 
 
 def _parse_excel(path):
-    dupes = _raw_header_duplicates(path, lambda: pd.read_excel(path, sheet_name=0, header=None, nrows=1, dtype=str).iloc[0].tolist())
+    dupes = _raw_header_duplicates(lambda: pd.read_excel(path, sheet_name=0, header=None, nrows=1, dtype=str).iloc[0].tolist())
     if dupes:
         raise ParseError(f"Duplicate column header(s): {', '.join(dupes)}. Rename them before uploading.")
-
     try:
         df = pd.read_excel(path, sheet_name=0, dtype=str)
     except Exception as e:
         raise ParseError(f"Could not read this as an Excel file ({e}).")
-
     if df.shape[1] == 0:
         raise ParseError("First sheet's header row is empty.")
-
     df = _clean_rows(df)
-    columns = list(df.columns)
-    rows = df.to_dict(orient="records")
-    return {"columns": columns, "rows": rows, "row_count": len(rows), "format": "xlsx", "geometry": None}
+    return {"columns": list(df.columns), "rows": df.to_dict(orient="records"),
+            "row_count": len(df), "format": "xlsx", "geometry": None}
 
 
 def _parse_geojson(path):
@@ -101,27 +97,25 @@ def _parse_geojson(path):
             data = json.load(f)
         except json.JSONDecodeError as e:
             raise ParseError(f"Invalid JSON ({e}).")
-
-    features = data.get("features")
+    features = data.get("features") if isinstance(data, dict) else None
     if not isinstance(features, list):
-        raise ParseError("Not a valid GeoJSON FeatureCollection, missing a 'features' array.")
+        raise ParseError("Not a GeoJSON FeatureCollection: there is no 'features' array.")
 
     rows = [dict(f.get("properties") or {}) for f in features]
-    columns = list(rows[0].keys()) if rows else []
-    geometry = [f.get("geometry") for f in features]
-    return {
-        "columns": columns,
-        "rows": rows,
-        "row_count": len(rows),
-        "format": "geojson",
-        "geometry": geometry,
-    }
+    columns = []
+    for row in rows:  # union across features, since properties can differ between them
+        for key in row:
+            if key not in columns:
+                columns.append(key)
+    return {"columns": columns, "rows": rows, "row_count": len(rows), "format": "geojson",
+            "geometry": [f.get("geometry") for f in features]}
 
 
 def save_parsed_payload(upload_dir, file_id, payload):
     out_path = os.path.join(upload_dir, f"{file_id}.parsed.json")
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f)
+        # default=str so database dates, decimals and UUIDs do not break the dump
+        json.dump(payload, f, default=str)
     return out_path
 
 

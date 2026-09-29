@@ -92,19 +92,3 @@ def test_build_select_query_with_schema_and_columns():
 def test_build_select_query_rejects_unsafe_table_name():
     with pytest.raises(ValueError):
         connectors.build_select_query("customers; DROP TABLE users;--")
-
-
-def test_chunk_offsets_even_division():
-    assert connectors.chunk_offsets(100, 25) == [(0, 25), (25, 25), (50, 25), (75, 25)]
-
-
-def test_chunk_offsets_uneven_division():
-    assert connectors.chunk_offsets(105, 25) == [(0, 25), (25, 25), (50, 25), (75, 25), (100, 5)]
-
-
-def test_chunk_offsets_empty_when_no_rows():
-    assert connectors.chunk_offsets(0, 25) == []
-
-
-def test_chunk_offsets_smaller_than_one_chunk():
-    assert connectors.chunk_offsets(10, 25) == [(0, 10)]

@@ -1,14 +1,5 @@
-# Optional -- only needed if you enable Method E ("splink") in a project's
-# config.methods. The base API works fully without this installed; Method
-# E just returns a clear 'Method E requires...' error until it is.
+# Method E (splink)
 splink==4.0.16
-
-
-# Optional -- enables the PostgreSQL direct-ingest connector (/api/db/*).
+# Direct database import for PostgreSQL and ClickHouse
 psycopg2-binary
-
-# Optional -- enables the ClickHouse direct-ingest connector (/api/db/*).
 clickhouse-connect
-
-# Optional -- enables the MySQL/MariaDB direct-ingest connector (/api/db/*).
-mysql-connector-python

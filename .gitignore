@@ -60,3 +60,7 @@ test-dataset/*.csv
 *.pyc
 relink-api/data/*.sqlite3*
 node_modules/
+relink.log
+*.bak*
+relink-studio/src/App.jsx
+relink-api/data/*

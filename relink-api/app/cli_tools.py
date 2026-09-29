@@ -1,18 +1,12 @@
 """
-ReLink Studio CLI (section 17) -- covers the commands that operate purely
-on local files and the standalone modules added in batches 1-5, without
-touching routes.py/db.py (that wiring is still pending -- see README).
+Small command line tools that work on local files without starting the server.
 
-Usage:
-    python -m app.cli_tools profile <file>
+    python -m app.cli_tools profile <file> [--json]
     python -m app.cli_tools validate-config <config.json>
-    python -m app.cli_tools schema-diff <old_schema.json> <new_schema.json>
-    python -m app.cli_tools check-capabilities
+    python -m app.cli_tools schema-diff <old.json> <new.json> [--json]
+    python -m app.cli_tools check-capabilities [--json]
 
-Every command prints human-readable output by default; pass --json for
-machine-readable output. Exit codes: 0 success, 1 validation/user error,
-2 unexpected failure. No credentials are ever printed (see
-connectors.redact_connection_config).
+Exit codes: 0 fine, 1 bad input or drift found, 2 unexpected failure.
 """
 import argparse
 import json

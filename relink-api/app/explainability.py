@@ -1,25 +1,21 @@
 """
-Matching explainability (Account C, section 3): answers "why did ReLink
-make this match?" for one review row, by re-deriving the actual inputs
-the matcher used -- normalize() and _blocking_key() are imported from
-app.matching itself, so this can never drift from what the real matcher
-does. It does not invent an explanation after the fact; every field here
-is either a value the matcher actually computed or a threshold comparison
-against the actual configured thresholds.
+Explains one review row: which method scored what, against which normalized
+strings, and which thresholds it did or did not clear. It reuses normalize()
+and _blocking_key() from app.matching, so it cannot drift from the matcher.
 """
-from .matching import normalize, _blocking_key
+from .matching import _blocking_key, normalize
 
 
 def explain_review_row(row, source_value, target_values_by_id, matching_cfg, thresholds, safety):
     """
     row: {"sourceId", "kind", "approved", "chosenMethod", "collisionPartner",
-          "methods": {letter: {"name","targetId","score"} or None}}
+          "methods": {letter: {"name", "targetId", "score"} or None}}
     source_value: the raw source match-column value for this row.
-    target_values_by_id: {targetId: raw target match-column value}, for
-    whichever targetId(s) actually appear in row["methods"].
+    target_values_by_id: {targetId: raw target match-column value} for the
+    targets that appear in row["methods"].
     """
-    auto_approve = thresholds.get("auto_approve", 0.92)
-    needs_review = thresholds.get("needs_review", 0.75)
+    auto_approve = thresholds.get("auto_approve", 0.95)
+    needs_review = thresholds.get("needs_review", 0.80)
 
     source_norm = normalize(source_value, matching_cfg)
     source_block_key = _blocking_key(source_norm)
@@ -50,22 +46,18 @@ def explain_review_row(row, source_value, target_values_by_id, matching_cfg, thr
     if row["kind"] == "collision":
         reasons.append(
             f"The best-scoring target is also claimed by source row {row.get('collisionPartner')}; "
-            "collision_guard blocked auto-approval until this is resolved."
+            "the collision guard blocked auto-approval until this is resolved."
         )
     if row["kind"] == "type_leak":
-        reasons.append("The best-scoring candidate's type/category did not match the target type this project expects.")
+        reasons.append("The best-scoring candidate's type did not match the target type this project expects.")
     if row["kind"] == "low_confidence":
         reasons.append(f"The best score was below the needs-review floor ({needs_review}).")
     if row["approved"] and row["kind"] == "consensus":
-        best_letter = row.get("chosenMethod")
-        best = per_method.get(best_letter) if best_letter else None
+        best = per_method.get(row.get("chosenMethod"))
         if best and best.get("ran"):
-            reasons.append(
-                f"Method {best_letter} scored {best['score']}, at or above the auto-approve "
-                f"threshold ({auto_approve})."
-            )
+            reasons.append(f"Method {row['chosenMethod']} scored {best['score']}, at or above the auto-approve threshold ({auto_approve}).")
     if not reasons:
-        reasons.append("This row was not auto-approved and does not carry a specific automatic-decision reason; it is a plain review case.")
+        reasons.append("This row was not auto-approved and has no specific automatic reason. It is a plain review case.")
 
     return {
         "sourceId": row["sourceId"],

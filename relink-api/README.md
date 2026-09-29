@@ -1,163 +1,40 @@
 # Relink Studio API
 
-A Flask + SQLite backend implementing all 9 sections of the original
-gap-list doc, built from scratch against the config/review-row shapes
-already used by `relink_studio.jsx`. There was no existing Flask/CLI tool
-in this conversation to wrap, so this is a fresh implementation.
+Flask and SQLite backend for Relink Studio. The full contract is in `openapi.yaml`. Most people should start everything with `./relink.sh` from the repo root, see the main README.
 
-## Run it
+## Running it directly
 
 ```bash
-pip install -r requirements.txt
-python run.py          # http://127.0.0.1:5000 (local mode; RELINK_MODE=lan binds 0.0.0.0)
+python3 -m venv venv && venv/bin/pip install -r requirements.txt
+venv/bin/python run.py        # http://127.0.0.1:5000
 ```
 
-Or, installed as a package:
+Or install it as a package with `pip install .` and run `relink-studio-api`. Environment variables are listed in the root README and resolved in `app/config.py`. `GET /health` is always unauthenticated. The server is waitress unless `RELINK_DEBUG=1` in local mode, which uses Flask's dev server.
 
-```bash
-pip install .
-relink-studio-api
-```
+## What is in it
 
-Or with Docker:
+- **Storage.** SQLite in `RELINK_DATA_DIR`: files, projects, jobs, review rows, an undo log, audit log, users, sessions, schema snapshots, exceptions and a structured decision log. Older databases pick up new columns on startup. Jobs that were running when the process died are marked as errors.
+- **Uploads.** csv, xlsx, xls, geojson and json. Empty and oversized files are rejected, trailing blank Excel rows are dropped, duplicate headers are refused, and non-UTF-8 CSVs fall back to cp1252. `DELETE /api/upload/<id>` returns 409 while a project still uses the file.
+- **Projects.** Creating one validates that the columns named in the config exist. `DELETE /api/projects/<id>` removes the project and everything stored for it.
+- **Matching.** Methods A, B and D are always available. C and E are optional installs and report clearly when missing. A run happens in a background thread and is polled at `.../jobs/<id>`. Only one run per project at a time, and results are replaced in a single transaction. This is fine for one process, not for horizontal scaling.
+- **Review.** Paginated, filterable queue. Approve and reject are separate stored states (`decision`). Approving needs a candidate target. Bulk approve and reject return an undo token, and undo skips rows changed since.
+- **Auth.** Username and password, bearer tokens (stored only as SHA-256 hashes) that expire after 12 hours, roles `reviewer` and `lead`, login throttling, logout. With auth required, every `/api` route needs a token except login and register. The first account can be created only from the local machine, after that only a lead can create accounts. With `safety.require_approval_hierarchy`, reviewers call `.../submit`, a different lead calls `.../approve`, and the direct approve routes are refused.
+- **Audit.** Entries record the logged in user. Where a request body names a reviewer, creator or actor, that name is only used when nobody is logged in.
+- **Geocoding.** `POST /api/geocode` is single row and rate limited to one request per second. Set `RELINK_NOMINATIM_USER_AGENT` to real contact information, because Nominatim rejects generic user agents with 403.
+- **Database import.** `/api/db/test-connection`, `/api/db/schema`, `/api/db/ingest` for PostgreSQL, ClickHouse and MySQL. Lead only when logins are on.
+- **Diagnostics and QC.** Profiling, schema drift, blocking diagnostics, run metrics, precision and recall (only with ground truth supplied), sampling strategies, row explanations. Method D is left out of score statistics.
+- **Exceptions.** Applied on the next run for four scopes, recorded only for the rest.
+- **Housekeeping.** `/api/admin/storage`, `/api/admin/cleanup/preview`, `/api/admin/cleanup`. Lead only when logins are on. Cleanup only deletes files inside the upload directory that no project references, needs `confirm=true`, and removes the matching file records.
 
-```bash
-docker build -t relink-api .
-docker run -p 5000:5000 -v $(pwd)/data:/srv/data -v $(pwd)/uploads:/srv/uploads relink-api
-```
+## Known gaps
 
-Env vars: `RELINK_MODE` (`local` default, or `lan`), `RELINK_HOST`
-(default `127.0.0.1` in local mode, `0.0.0.0` in LAN mode),
-`RELINK_PORT` (default `5000`), `RELINK_CORS_ORIGINS` (comma-separated,
-default `http://localhost:5173`), `RELINK_MAX_UPLOAD_BYTES` (default
-50MB), `RELINK_REQUIRE_AUTH` (default off in local mode, on in LAN mode
--- enforces a bearer token on every route when true), `RELINK_DEBUG`
-(Flask debug mode; ignored in LAN mode, which never runs with debug on),
-`RELINK_DATA_DIR` / `RELINK_UPLOAD_DIR` (existing storage paths),
-`RELINK_UPLOAD_EXPIRY_DAYS` (enable background cleanup of old
-unreferenced uploads), `RELINK_FRONTEND_DIST=/path/to/dist` (serve a
-built frontend from the same process), `RELINK_NOMINATIM_USER_AGENT`
-(set this to real contact info before relying on `/api/geocode`). All of
-this is resolved in `app/config.py`; an explicit env var always
-overrides its mode's default. Invalid values (a bad `RELINK_MODE`, a
-non-numeric `RELINK_PORT`, etc.) raise a clear error at startup instead
-of falling back to a guess.
-
-`GET /health` (outside `/api`, always unauthenticated) returns
-`{"status": "ok", "mode": "local"|"lan", "auth_required": true|false}`
-so you can check a running instance's configuration at a glance.
-
-See the root `README.md` for the local-vs-LAN startup flow
-(`./run_relink.sh --local` / `--lan`) and the firewall / public-internet
-warnings that come with LAN mode.
+The config accepts hierarchy chains, exclude patterns, chained and hub shapes and sort order, but matching does not act on them. Custom methods from the UI are never executed. Every user sees every project.
 
 ## Tests
 
 ```bash
-pip install pytest
-python -m pytest tests/ -v
+venv/bin/pip install pytest
+venv/bin/python -m pytest tests -v
 ```
 
-Tests: matching-engine unit tests (normalization, methods A/B/D,
-threshold/type-leak/collision-guard/tie-downgrade logic in the agreement
-combiner), parser unit tests (including a regression test for the xlsx
-trailing-empty-rows bug), config/LAN-mode unit tests (`test_config.py`:
-RELINK_MODE/HOST/PORT/REQUIRE_AUTH/CORS_ORIGINS resolution, invalid-value
-errors, the `/health` endpoint, and that LAN mode's auth-required default
-actually gates a real route), and API-level integration tests covering
-the full upload -> project -> run -> review -> bulk -> undo -> export ->
-audit flow, plus auth and the approval hierarchy. Run them yourself to confirm on your machine.
-
-## Section-by-section status
-
-**1. JSON API** -- done. All endpoints below `/api`; see `openapi.yaml`
-for the full contract (every route under /api).
-
-**2. Persistence** -- done. SQLite (`app/db.py`): `files`, `projects`,
-`jobs`, `review_rows`, `decisions` (real undo log, not a single
-snapshot), `audit_log`, `users`, `sessions`.
-
-**3. Matching methods:**
-- Method A (fuzzy, difflib) and Method D (geometry corroboration,
-  haversine centroid distance) -- done and tested.
-- Method B -- a lightweight token-overlap linker, labeled honestly as an
-  approximation of `recordlinkage`, not a wrapper of the actual package.
-- Method E (Splink) -- actually installed and tested against fixtures.
-  Falls back to Splink's untrained default weights (flagged
-  `calibrated: false`) when EM training can't converge, which is common
-  on small datasets -- this was observed for real during testing, not
-  hypothesized.
-- Nominatim lookup (`POST /api/geocode`) -- rate-limited to 1 req/sec,
-  single-row only. Verified reachable from this sandbox, but Nominatim
-  itself returned 403 Forbidden on the test call (their bot/abuse
-  protection, not a network block) -- set `RELINK_NOMINATIM_USER_AGENT`
-  to real contact info, which may resolve it.
-
-**4. Async jobs** -- background thread per `/run` call, `GET
-.../jobs/{id}` for polling, `GET .../jobs/{id}/stream` for Server-Sent
-Events. Not a real task queue (RQ/Celery) -- fine for one process, not
-for horizontal scaling.
-
-**5. Multi-user / auth** -- `app/auth.py`: username/password
-(werkzeug-hashed), bearer tokens with expiry, two roles (`reviewer`,
-`lead`). Off by default in local mode, on by default in LAN mode (see
-`RELINK_MODE` / `RELINK_REQUIRE_AUTH` above) -- matching the original
-test flow when unauthenticated, verified both paths still pass. Real
-per-user audit attribution (not "anonymous" once logged in). Approval
-hierarchy: `POST .../review/{id}/submit` (any authenticated user) then
-`POST .../review/{id}/approve` (lead role only), gated by
-`config.safety.require_approval_hierarchy`.
-
-**6. File-handling hardening** -- extension whitelist before disk write,
-empty-file rejection, `MAX_CONTENT_LENGTH` for oversized uploads,
-structured JSON error responses for 400/404/405/413/500 (no more raw
-Werkzeug HTML pages or print statements), opt-in background expiry sweep
-for unreferenced uploads (`RELINK_UPLOAD_EXPIRY_DAYS`), `DELETE
-/api/upload/{id}` (blocked with 409 while a project still references it).
-
-**7. Packaging & deployment** -- `pyproject.toml` (installable,
-`relink-studio-api` console script), pinned `requirements.txt`, split
-`requirements-optional.txt` for the heavy Method C/E deps, `Dockerfile`,
-and `RELINK_FRONTEND_DIST` so one process can serve a built frontend
-alongside the API (SPA catch-all route included).
-
-**8. Testing** -- done, see above.
-
-**9. Documentation** -- this README, plus `openapi.yaml` (OpenAPI 3.0,
-every route under /api, request/response schemas including `ReviewRow` and
-`ProjectConfig`).
-
-## A real bug this pass caught and fixed
-
-Early in this build, making auth's `actor_name()` the *default*
-audit-log actor broke the background matching job: it silently
-overwrote a successful `"done"` job status with `"error"`, because
-`actor_name()` reads Flask's `request` object, which doesn't exist
-inside a background thread. Fixed by capturing the triggering user's
-name in the request handler (where `request` IS valid) before spawning
-the thread, and passing it in explicitly. Caught by re-running the full
-curl flow after making the change -- not by inspection -- which is
-exactly why that flow is now also a permanent pytest test
-(`test_full_review_flow`, `test_auth_register_login_and_audit_attribution`).
-
-## Method C, auth, and cleanup notes
-
-- **Method C** (`"embedding"` in `config.methods`) is a real optional method
-  in `app/matching_embedding.py`, using a local sentence-transformers model.
-  Install with `pip install -r requirements-embedding.txt` (pulls PyTorch).
-  Without it the run still completes, but the job message and audit log carry
-  a warning that Method C did not run. A model given by name is downloaded
-  once from the Hugging Face hub; for fully offline use set
-  `RELINK_EMBEDDING_MODEL` to a local directory and `RELINK_EMBEDDING_OFFLINE=1`.
-  It scores every source row against every target row (no blocking).
-- **Custom methods** in the frontend are stored in the config package only.
-  The backend deliberately does not load or execute user-supplied scripts.
-- **Auth:** with `RELINK_REQUIRE_AUTH` on (the LAN default) every `/api`
-  route needs a bearer token except `/api/auth/login` and `/api/auth/register`.
-  The first registered account bootstraps (any role); after that only a
-  logged-in lead can create leads, and with auth required only a lead can
-  create accounts.
-- **Cleanup:** `POST /api/admin/cleanup` only deletes files inside the upload
-  directory that no project references, and needs the `lead` role when auth is
-  required.
-- The frontend is fully wired to this API (`relink_studio.jsx`).
+They cover normalization, methods A, B, D and the agreement logic, parsers, config and LAN mode, auth, the review, undo, export and audit flow, and regression tests for the problems fixed in the hardening pass (`test_hardening.py`, `test_hardening_extra.py`).

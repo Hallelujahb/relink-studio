@@ -1,5 +1,5 @@
 """
-Candidate-generation and blocking diagnostics (section 7).
+Candidate-generation and blocking diagnostics.
 
 Reuses the existing blocking logic in app.matching (normalize,
 _build_blocks) rather than reimplementing it, so diagnostics always

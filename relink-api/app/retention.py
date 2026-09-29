@@ -1,27 +1,11 @@
 """
-Retention and cleanup controls (section 15). Everything here is local
-disk bookkeeping -- no network calls. Nothing is deleted without an
-explicit confirm=True; preview_cleanup() always shows what WOULD be
-removed before delete_items() actually removes anything.
+Storage bookkeeping for the upload and data directories. Everything here is
+local disk work. Nothing is deleted without confirm=True, and
+preview_cleanup() shows what would go before delete_items() removes anything.
 """
 import os
 import time
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-
-
-@dataclass
-class RetentionPolicy:
-    raw_uploads_days: int = 90
-    temp_files_days: int = 7
-    import_previews_days: int = 7
-    intermediate_normalized_days: int = 30
-    candidate_pairs_days: int = 30
-    job_logs_days: int = 60
-    audit_records_days: int = 365
-    old_exports_days: int = 90
-    old_backups_days: int = 180
-    source_snapshots_days: int = 180
 
 
 def _age_days(mtime: float) -> float:
@@ -29,21 +13,17 @@ def _age_days(mtime: float) -> float:
 
 
 def storage_usage_summary(directories: dict) -> dict:
-    """directories: {"uploads": "/path", "exports": "/path", ...}.
-    Returns per-directory size/file counts; skips any path that doesn't
-    exist rather than raising."""
-    summary = {}
-    total_bytes = 0
+    """directories: {"uploads": "/path", ...}. Paths that do not exist are reported, not raised."""
+    summary, total_bytes = {}, 0
     for label, path in directories.items():
         if not path or not os.path.isdir(path):
             summary[label] = {"exists": False, "bytes": 0, "file_count": 0}
             continue
-        size, count = 0, 0
+        size = count = 0
         for root, _, files in os.walk(path):
             for fn in files:
-                fp = os.path.join(root, fn)
                 try:
-                    size += os.path.getsize(fp)
+                    size += os.path.getsize(os.path.join(root, fn))
                     count += 1
                 except OSError:
                     continue
@@ -54,9 +34,7 @@ def storage_usage_summary(directories: dict) -> dict:
 
 
 def preview_cleanup(directory: str, max_age_days: int, protected_paths: set = None) -> list:
-    """Lists files older than max_age_days, excluding anything in
-    protected_paths (e.g. files still referenced by an active project).
-    Never deletes -- this is read-only."""
+    """Files older than max_age_days that are not protected. Read only."""
     protected_paths = protected_paths or set()
     if not os.path.isdir(directory):
         return []
@@ -67,19 +45,16 @@ def preview_cleanup(directory: str, max_age_days: int, protected_paths: set = No
             if fp in protected_paths:
                 continue
             try:
-                mtime = os.path.getmtime(fp)
+                age = _age_days(os.path.getmtime(fp))
+                if age >= max_age_days:
+                    candidates.append({"path": fp, "age_days": round(age, 1), "bytes": os.path.getsize(fp)})
             except OSError:
                 continue
-            age = _age_days(mtime)
-            if age >= max_age_days:
-                candidates.append({"path": fp, "age_days": round(age, 1), "bytes": os.path.getsize(fp)})
     return candidates
 
 
 def delete_items(items: list, confirm: bool = False) -> dict:
-    """items: output of preview_cleanup(). Refuses to delete anything
-    unless confirm=True is passed explicitly by the caller (i.e. the user
-    has seen the preview and agreed)."""
+    """Deletes the given preview items, and only when confirm=True."""
     if not confirm:
         return {"deleted": [], "skipped": len(items), "reason": "confirm=False; nothing was deleted"}
     deleted, errors = [], []
@@ -93,16 +68,11 @@ def delete_items(items: list, confirm: bool = False) -> dict:
 
 
 def cleanup_audit_entry(actor: str, policy_name: str, items: list, confirmed: bool) -> dict:
-    """Structured record for the project's audit_log table -- callers
-    insert this, this module doesn't touch the DB directly."""
+    """A record for the audit_log table. The caller inserts it."""
     return {
         "actor": actor,
         "action": "retention_cleanup",
-        "detail": {
-            "policy": policy_name,
-            "confirmed": confirmed,
-            "item_count": len(items),
-            "total_bytes": sum(i.get("bytes", 0) for i in items),
-        },
+        "detail": {"policy": policy_name, "confirmed": confirmed, "item_count": len(items),
+                   "total_bytes": sum(i.get("bytes", 0) for i in items)},
         "created_at": datetime.now(timezone.utc).isoformat(),
     }

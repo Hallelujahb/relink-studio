@@ -1,77 +1,19 @@
 """
-Direct database ingestion for Relink Studio.
+Direct database import: turns a Postgres, ClickHouse or MySQL table into a
+registered file, so it can be a project's source or target like an upload.
 
-Drop this file in as relink-api/app/routes_db_ingest.py, then register it
-in relink-api/app/__init__.py the same way routes.py and routes_extra.py
-already are (add both lines near the existing two blueprint registrations):
+POST /api/db/test-connection   check credentials and reachability only
+POST /api/db/schema            column list and estimated row count for a table
+POST /api/db/ingest            pull the table (default cap 100,000 rows)
 
-    from .routes_db_ingest import bp as api_bp_db_ingest
-    app.register_blueprint(api_bp_db_ingest, url_prefix="/api")
+Body: provider, host, port, database, table, optional schema, username,
+password, ssl, and row_limit for /ingest (null means no cap).
 
-What this adds
----------------
-app/connectors.py already has a full PostgresProvider/ClickHouseProvider
-abstraction (test_connection, discover_schema, estimate_row_count,
-extract_chunks) -- but nothing in the API ever calls it. The only route
-that touches connectors.py today is GET /api/connectors/capabilities,
-which just reports whether psycopg2/clickhouse-connect are installed.
-There was no way to actually turn a Postgres or ClickHouse table into a
-project's source/target file.
-
-This module closes that gap by reusing extract_chunks() to pull a table's
-rows into memory, in the exact same {"columns", "rows", "row_count",
-"format", "geometry": None} shape app.parsers.parse_file() already
-produces for CSV/XLSX/GeoJSON uploads, then writing it through the same
-save_parsed_payload() + `files` table row every uploaded file goes
-through. Everything downstream -- project creation, matching, review,
-export -- is completely untouched: as far as the rest of the app is
-concerned, a database-ingested table just is another uploaded file.
-
-Endpoints
----------
-POST /api/db/test-connection   -- verify credentials/reachability only
-POST /api/db/schema             -- column list + estimated row count for one table
-POST /api/db/ingest              -- pull the table and register it as a file
-
-All three take the same JSON body shape:
-    {
-      "provider": "postgresql" | "clickhouse" | "mysql",
-      "host": "...", "port": 5432, "database": "...",
-      "schema": "public",        # optional
-      "table": "...",             # required for /schema and /ingest
-      "username": "...", "password": "...",   # optional
-      "ssl": false
-    }
-/ingest additionally accepts "row_limit" (default 100,000; pass null for
-no cap -- use with care on a large table, since it's all held in memory
-for this one request).
-
-Security notes
----------------
-- Connection config (including the password) is only ever held in this
-  request's memory. It is NEVER written to the `files` table, never
-  logged, and never included in the audit log -- the only thing that
-  could persist it is connectors.redact_connection_config(), which is
-  applied to the one debug field in the test-connection response.
-- This does not loosen or bypass RELINK_REQUIRE_AUTH: in --lan mode with
-  auth on, these routes require a bearer token exactly like every other
-  /api route (via the existing @require_auth() decorator).
-- Real capability, not a guess: if psycopg2 / clickhouse-connect /
-  mysql-connector-python aren't installed on the backend, every route
-  here returns a clear 501 (the same ProviderUnavailable pattern
-  app.matching_splink.py already uses for the optional Method E
-  dependency) rather than a confusing 500.
-
-Known limitation, carried over honestly from app/connectors.py's own
-docstring: the ClickHouse path (query_row_block_stream()) has not been
-exercised against a real ClickHouse instance in this codebase -- test it
-against yours before relying on it. The MySQLProvider is new and,
-likewise, has not been run against a live MySQL/MariaDB server here --
-its shape mirrors PostgresProvider closely (mysql-connector-python's
-cursor/parameterized-query API is very close to psycopg2's), so it
-should be the more predictable of the two unverified paths, but test it
-before relying on it too. The Postgres path uses psycopg2's well-known,
-stable API and remains the most trustworthy of the three.
+The caller chooses the host and port, so the server will connect anywhere it
+can reach. With logins on these routes need the lead role. Connection details
+live only in the request and are never stored, logged or audited. A missing
+driver returns 501. ClickHouse and MySQL have not been run against a live
+server, Postgres is the tested path.
 """
 import json
 import uuid
@@ -79,7 +21,7 @@ from datetime import datetime
 
 from flask import Blueprint, current_app, jsonify, request
 
-from .auth import require_auth
+from .auth import require_lead_when_auth
 from .connectors import ConnectionConfig, get_provider, ProviderUnavailable, redact_connection_config
 from .db import get_conn
 from .parsers import save_parsed_payload
@@ -128,7 +70,7 @@ def _config_from_body(body):
 
 
 @bp.route("/db/test-connection", methods=["POST"])
-@require_auth()
+@require_lead_when_auth
 def test_connection():
     body = request.get_json(silent=True) or {}
     try:
@@ -146,7 +88,7 @@ def test_connection():
 
 
 @bp.route("/db/schema", methods=["POST"])
-@require_auth()
+@require_lead_when_auth
 def db_schema():
     body = request.get_json(silent=True) or {}
     try:
@@ -167,7 +109,7 @@ def db_schema():
 
 
 @bp.route("/db/ingest", methods=["POST"])
-@require_auth()
+@require_lead_when_auth
 def db_ingest():
     body = request.get_json(silent=True) or {}
     try:
@@ -225,6 +167,3 @@ def db_ingest():
         "row_count": len(rows), "format": provider_name, "has_geometry": False,
         "truncated": truncated,
     }), 201
-
-
-

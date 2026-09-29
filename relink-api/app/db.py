@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import threading
+from datetime import datetime, timezone
 
 _local = threading.local()
 _DB_PATH = None
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS review_rows (
     source_name TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'consensus',
     approved INTEGER NOT NULL DEFAULT 0,
+    decision TEXT,
     chosen_method TEXT,
     collision_partner TEXT,
     methods_json TEXT NOT NULL,
@@ -72,6 +74,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     row_id TEXT NOT NULL,
     undo_token TEXT NOT NULL,
     previous_state_json TEXT NOT NULL,
+    after_json TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
@@ -86,6 +89,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- token holds a SHA-256 of the bearer token, never the token itself.
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -106,11 +110,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_project ON audit_log(project_id);
 
--- Added for batch 8: schema snapshots (per uploaded filename, so a
--- re-upload of "the same" source can be diffed for drift), project
--- exceptions (explicit, audited safety-rule overrides), and a structured
--- append-only decision log (richer than the lightweight `decisions` undo
--- table above, which only exists to power undo).
 CREATE TABLE IF NOT EXISTS schema_snapshots (
     id TEXT PRIMARY KEY,
     filename TEXT NOT NULL,
@@ -158,6 +157,20 @@ CREATE INDEX IF NOT EXISTS idx_review_decision_log_project_source ON review_deci
 CREATE INDEX IF NOT EXISTS idx_audit_log_project_created ON audit_log(project_id, created_at);
 """
 
+# Columns added after the first release. Older databases get them on startup.
+_ADDED_COLUMNS = (
+    ("review_rows", "decision", "TEXT"),
+    ("decisions", "after_json", "TEXT"),
+)
+
+# Housekeeping audit entries (storage cleanup) are not tied to a real project,
+# but audit_log has a foreign key, so they hang off this placeholder row.
+SYSTEM_PROJECT_ID = "system"
+
+
+def _now():
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
 
 def init_db(data_dir):
     global _DB_PATH
@@ -165,18 +178,33 @@ def init_db(data_dir):
     conn = sqlite3.connect(_DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+
+    for table, column, ddl in _ADDED_COLUMNS:
+        existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+    now = _now()
+    conn.execute(
+        "INSERT OR IGNORE INTO projects (id, name, config_json, status, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+        (SYSTEM_PROJECT_ID, "system", "{}", "system", now, now),
+    )
+    # A job that was running when the process died will never finish.
+    conn.execute(
+        "UPDATE jobs SET status='error', message='Interrupted by a restart. Run it again.', updated_at=? "
+        "WHERE status IN ('pending','running')",
+        (now,),
+    )
     conn.commit()
     conn.close()
 
 
 def get_conn():
-    # One connection per thread (Flask's dev server and the background
-    # matching thread each need their own).
+    # One connection per thread: the request threads and the background matcher each need their own.
     if not hasattr(_local, "conn"):
         _local.conn = sqlite3.connect(_DB_PATH, timeout=30)
         _local.conn.row_factory = sqlite3.Row
         _local.conn.execute("PRAGMA foreign_keys = ON")
-        # WAL lets the background matching thread write while an HTTP
-        # request thread reads (e.g. job polling) without lock timeouts.
+        # WAL lets the matching thread write while a request thread polls job status.
         _local.conn.execute("PRAGMA journal_mode = WAL")
     return _local.conn

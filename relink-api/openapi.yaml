@@ -52,7 +52,8 @@ components:
         approvedBy: { type: string, nullable: true }
     ProjectConfig:
       type: object
-      description: Matches the frontend's buildConfigObject() shape.
+      description: Matches the frontend's buildConfigObject() shape. Extra keys are kept and stored.
+      additionalProperties: true
       required: [project_name, source, target, methods]
       properties:
         project_name: { type: string }
@@ -62,7 +63,7 @@ components:
           properties:
             id_column: { type: string }
             match_column: { type: string }
-            hierarchy: { type: string }
+            hierarchy: { type: array, items: { type: string } }
         target:
           type: object
           required: [id_column, match_column]
@@ -178,6 +179,13 @@ paths:
         '400': { description: Bad request }
 
   /projects/{project_id}:
+    delete:
+      summary: Delete a project and everything stored for it (lead only when logins are on)
+      parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '204': { description: Deleted }
+        '404': { description: Not found }
+        '409': { description: A run is still in progress }
     get:
       summary: Get project metadata + config
       parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
@@ -202,7 +210,7 @@ paths:
 
   /projects/{project_id}/run:
     post:
-      summary: Start a background matching job for this project
+      summary: 'Start a background matching job. Answers 409 if one is already running, or if decisions exist and the body is not {"force": true}'
       security: [{ bearerAuth: [] }]
       parameters: [{ name: project_id, in: path, required: true, schema: { type: string } }]
       responses:
@@ -337,6 +345,13 @@ paths:
         - { name: page, in: query, schema: { type: integer, default: 1 } }
         - { name: page_size, in: query, schema: { type: integer, default: 50 } }
       responses: { '200': { description: OK } }
+
+  /auth/logout:
+    post:
+      summary: Revoke the bearer token that sent this request
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Logged out }
 
   /geocode:
     post:

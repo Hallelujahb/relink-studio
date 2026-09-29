@@ -1,8 +1,11 @@
 """
-Exception and policy management (section 11). An exception is an explicit,
-audited record that a specific safety rule should NOT apply to a specific
-scope -- it never silently disables the rule globally, and it is always
-visible wherever it takes effect.
+Exception and policy management. An exception is an explicit, audited record
+that one safety rule should not apply to one scope. It never switches a rule
+off globally.
+
+The run applies these scopes: excluded_source, ignored_record,
+allowed_type_mismatch and approved_many_to_one. The rest are recorded for the
+audit trail only.
 """
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,8 +49,13 @@ class Exception_:  # trailing underscore: "Exception" is a builtin
     def is_expired(self, as_of: Optional[str] = None) -> bool:
         if not self.expires_at:
             return False
+        limit = datetime.fromisoformat(self.expires_at)
         now = datetime.fromisoformat(as_of) if as_of else datetime.now(timezone.utc)
-        return datetime.fromisoformat(self.expires_at) < now
+        if limit.tzinfo is None:
+            limit = limit.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        return limit < now
 
     def is_effective(self, as_of: Optional[str] = None) -> bool:
         return self.active and not self.is_expired(as_of)
@@ -78,9 +86,7 @@ class ExceptionRegistry:
         return list(self._exceptions)
 
     def applies_to(self, source_id: str, scope: str) -> Optional[Exception_]:
-        """Returns the first active, non-expired exception matching both
-        the row and the specific safety rule being considered, or None --
-        callers must check this explicitly, it never overrides silently."""
+        """The first active, unexpired exception for this row and this rule, or None."""
         for e in self._exceptions:
             if e.affected_source_id == source_id and e.scope == scope and e.is_effective():
                 return e
