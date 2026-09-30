@@ -41,6 +41,9 @@ def create_app():
     from .routes_db_ingest import bp as api_bp_db_ingest
     app.register_blueprint(api_bp_db_ingest, url_prefix="/api")
 
+    from .routes_library import bp as api_bp_library
+    app.register_blueprint(api_bp_library, url_prefix="/api")
+
     @app.before_request
     def _guard_browser_requests():
         # Without logins, anything a browser on this machine can reach is fair

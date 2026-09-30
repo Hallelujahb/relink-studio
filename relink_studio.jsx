@@ -171,6 +171,26 @@ const TOKENS_CSS = `
   .muted { color: var(--text-muted); }
   .b { border-color: var(--border); }
   .card { border-radius: 10px; box-shadow: var(--shadow); }
+  /* Tailwind's default border color is a light gray, which shows up as a white
+     outline around anything that has "border" but no explicit color. Pin every
+     border to the theme so cards look the same everywhere. Inline styles
+     (approved green, rejected red) still win over this. */
+  .rls .card, .rls .border, .rls .border-b, .rls .border-t, .rls .border-l, .rls .border-r { border-color: var(--border); }
+  .rls .btn-success { border-color: var(--success); }
+  .rls .btn-danger { border-color: var(--danger); }
+  /* relink-checkbox-theme: native checkboxes render white in dark mode. Draw our own. */
+  .rls input[type="checkbox"] {
+    -webkit-appearance: none; appearance: none; margin: 0; width: 16px; height: 16px; flex-shrink: 0;
+    display: inline-grid; place-content: center; cursor: pointer; border-radius: 4px;
+    background: var(--surface-2); border: 1.5px solid var(--text-muted);
+  }
+  .rls input[type="checkbox"]:hover { border-color: var(--primary); }
+  .rls input[type="checkbox"]:checked { background: var(--primary); border-color: var(--primary); }
+  .rls input[type="checkbox"]:checked::after {
+    content: ""; width: 8px; height: 4px; border-left: 2px solid #fff; border-bottom: 2px solid #fff;
+    transform: translateY(-1px) rotate(-45deg);
+  }
+  .rls input[type="checkbox"]:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
   .btn { border-radius: 6px; transition: background-color .15s ease, border-color .15s ease, transform .1s ease, color .15s ease; cursor: pointer; }
   .btn:active { transform: scale(0.97); }
   .btn-primary { background: var(--primary); color: white; }
@@ -365,13 +385,15 @@ function ThresholdSlider({ label, value, setValue, accent }) {
 
 const TAB_LABELS = ["Sources & shape", "Hierarchy & methods", "Safety & rules", "Review queue", "Approve & finalize", "Export & audit"];
 
-function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChecking, onRefresh, isAuthenticated, authUser, onLogin, onLogout }) {
+function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChecking, onRefresh, isAuthenticated, authUser, onLogin, onLogout, onSwitchMode, onRegister }) {
   const [open, setOpen] = useState(false);
   const [editBase, setEditBase] = useState(apiBase);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
 
   useEffect(() => { setEditBase(apiBase); }, [apiBase]);
 
@@ -385,10 +407,10 @@ function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChe
     } else if (health) {
       if (health.mode === "lan") {
         dotColor = needsSignIn ? "var(--warning)" : "var(--success)";
-        label = needsSignIn ? "LAN mode \u00b7 sign-in required" : health.auth_required ? `LAN mode \u00b7 ${authUser || "signed in"}` : "LAN mode \u00b7 auth off";
+        label = needsSignIn ? "Team sharing \u00b7 sign-in required" : health.auth_required ? `Team sharing \u00b7 ${authUser || "signed in"}` : "Team sharing \u00b7 no login";
       } else {
         dotColor = "var(--success)";
-        label = "Local only";
+        label = "This computer only";
       }
     }
   }
@@ -398,7 +420,7 @@ function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChe
     setIsLoggingIn(true);
     setLoginError(null);
     try {
-      await onLogin(username, password);
+      await (isRegistering && onRegister ? onRegister(username, password) : onLogin(username, password));
       setPassword("");
     } catch (err) {
       setLoginError(err.message);
@@ -442,12 +464,48 @@ function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChe
             </div>
           )}
 
+          {health && onSwitchMode && (
+            <div className="border-t b pt-2 mt-2 mb-2">
+              <div className="text-xs font-semibold muted uppercase tracking-wide mb-1.5">Sharing</div>
+              {health.mode === "lan" ? (
+                <>
+                  <div className="text-xs muted mb-2">Team sharing is on. Teammates on your private network can open Relink and must sign in. Your data still never leaves the network.</div>
+                  <button
+                    disabled={isSwitching}
+                    onClick={async () => {
+                      if (!window.confirm("Switch back to this computer only? Teammates will lose access.")) return;
+                      setIsSwitching(true); await onSwitchMode("local"); setIsSwitching(false);
+                    }}
+                    className="btn btn-ghost text-xs font-medium px-2.5 py-1.5 w-full"
+                  >{isSwitching ? "Restarting..." : "Switch to this computer only"}</button>
+                </>
+              ) : (
+                <>
+                  <div className="text-xs muted mb-2">Right now only this computer can open Relink. Team sharing lets teammates on the same private network use it too, with a login. Nothing goes to the internet.</div>
+                  <button
+                    disabled={isSwitching}
+                    onClick={async () => {
+                      if (!window.confirm("Turn on team sharing? Relink restarts (a few seconds), then anyone on your private network can reach it and must sign in. You will create the first account next.")) return;
+                      setIsSwitching(true); await onSwitchMode("lan"); setIsSwitching(false);
+                    }}
+                    className="btn btn-ghost text-xs font-medium px-2.5 py-1.5 w-full"
+                  >{isSwitching ? "Restarting..." : "Switch to team sharing (private network)"}</button>
+                </>
+              )}
+            </div>
+          )}
+
           {needsSignIn && (
             <form onSubmit={handleLogin} className="flex flex-col gap-1.5 mt-1">
               <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" autoComplete="username" className="surf2 border b rounded-md text-xs px-2 py-1.5" />
               <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" type="password" autoComplete="current-password" className="surf2 border b rounded-md text-xs px-2 py-1.5" />
               {loginError && <div className="text-xs" style={{ color: "var(--danger)" }}>{loginError}</div>}
-              <button type="submit" disabled={isLoggingIn} className="btn btn-primary text-xs font-medium px-2.5 py-1.5">{isLoggingIn ? "Signing in..." : "Sign in"}</button>
+              <button type="submit" disabled={isLoggingIn} className="btn btn-primary text-xs font-medium px-2.5 py-1.5">{isLoggingIn ? "Working..." : isRegistering ? "Create first account" : "Sign in"}</button>
+              {onRegister && (
+                <button type="button" onClick={() => { setIsRegistering(!isRegistering); setLoginError(null); }} className="text-xs muted" style={{ background: "none", border: "none", textDecoration: "underline", padding: 0, textAlign: "left" }}>
+                  {isRegistering ? "I already have an account" : "No accounts yet? Create the first one"}
+                </button>
+              )}
             </form>
           )}
           {isAuthenticated && health?.auth_required && (
@@ -459,7 +517,7 @@ function ConnectionStatus({ apiBase, onApiBaseChange, health, healthError, isChe
   );
 }
 
-function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged, connection, fastMode, setFastMode }) {
+function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, onUploadConfig, setToast, sourceFile, targetFile, onExecutePipeline, isRunning, canRun, merged, connection, fastMode, setFastMode, onNewProject }) {
   return (
     <div style={{ position: "sticky", top: 0, zIndex: 30, flexShrink: 0 }}>
       <div className="topbar-tint b border-b flex items-center justify-between px-5 py-2">
@@ -467,6 +525,7 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
           <Logo />
           <span className="font-semibold text-sm tracking-tight">ReLink Studio</span>
           <span className="text-xs muted surf2 border b px-2 py-1 rounded-md">{sourceFile.name} &harr; {targetFile.name}</span>
+          <button onClick={onNewProject} className="btn btn-ghost text-xs font-medium px-2.5 py-1" title="Clear the files and settings on this screen and start over. Nothing on the backend is deleted.">New project</button>
         </div>
         <div className="flex items-center gap-3">
           <span
@@ -487,13 +546,17 @@ function TopBar({ theme, setTheme, activeTab, setActiveTab, onDownloadConfig, on
             <input type="file" accept=".json" onChange={onUploadConfig} className="hidden" />
           </label>
           <button onClick={onDownloadConfig} className="btn btn-ghost text-xs font-medium px-3 py-1.5">Download config</button>
-          <label
-            className="text-xs muted flex items-center gap-1.5 cursor-pointer"
+          <div
+            role="switch" aria-checked={fastMode} tabIndex={0}
+            onClick={() => setFastMode(!fastMode)}
+            onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); setFastMode(!fastMode); } }}
+            className="text-xs font-medium flex items-center gap-2 cursor-pointer select-none"
+            style={{ color: fastMode ? "var(--success)" : "var(--text-muted)" }}
             title="After the pipeline finishes, auto-approve rows with full method agreement at or above your auto-approve threshold, then drop you straight onto the short needs-attention list instead of the full checklist."
           >
-            <input type="checkbox" checked={fastMode} onChange={(e) => setFastMode(e.target.checked)} />
+            <Switch on={fastMode} onToggle={() => {}} accent="var(--success)" />
             Fast mode
-          </label>
+          </div>
           <button
             onClick={onExecutePipeline}
             disabled={isRunning || !canRun}
@@ -856,6 +919,36 @@ function DbImportForm({ onBack, onIngested, setToast }) {
 
 function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, matchColumn, setMatchColumn, hierarchy, setHierarchy, setToast }) {
   const [isParsing, setIsParsing] = useState(false);
+  // Shared folder (RELINK_LIBRARY_DIR on the backend). null when not configured.
+  const [library, setLibrary] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    apiJson("/library").then((r) => { if (alive) setLibrary(r && r.enabled && r.files.length ? r : null); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  async function importFromLibrary(name) {
+    setIsParsing(true);
+    setPendingName(name);
+    try {
+      const up = await apiJson("/library/import", { method: "POST", body: JSON.stringify({ filename: name }) });
+      let geometry = null, geometryRows = null;
+      if (up.has_geometry) {
+        const g = await apiJson(`/upload/${up.file_id}?geometry=1`);
+        geometry = g.geometry || null; geometryRows = g.rows || null;
+      }
+      setFile({ name: up.filename, format: up.format, rowCount: up.row_count, columns: up.columns, geometry, geometryRows, fileId: up.file_id, uploadError: null });
+      const guessedId = guessIdColumn(up.columns);
+      setIdColumn(guessedId);
+      setMatchColumn(guessMatchColumn(up.columns, guessedId));
+      setHierarchy([]);
+      setToast(`Loaded ${up.filename} from the shared folder: ${up.columns.length} columns, ${up.row_count} rows.`);
+    } catch (err) {
+      setToast(`Could not load ${name} from the shared folder: ${err.message}`);
+    } finally {
+      setIsParsing(false);
+    }
+  }
   const [pendingName, setPendingName] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const dragDepth = useRef(0);
@@ -1014,6 +1107,16 @@ function FilePickerCard({ role, file, setFile, columns, idColumn, setIdColumn, m
             >
               {file.fileId ? "Or replace with a table from Postgres / ClickHouse / MySQL" : "Or import a table from Postgres / ClickHouse / MySQL"}
             </button>
+            {library && (
+              <select
+                defaultValue="" disabled={isParsing}
+                onChange={(e) => { const name = e.target.value; e.target.value = ""; if (name) importFromLibrary(name); }}
+                className="surf2 border b rounded-md text-xs px-2 py-1.5 mt-3"
+              >
+                <option value="" disabled>Or pick from the shared folder ({library.folder})</option>
+                {library.files.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}
+              </select>
+            )}
           </>
         )}
       </div>
@@ -1095,7 +1198,7 @@ function TabSourcesShape(props) {
   const {
     sourceFile, setSourceFile, sourceIdCol, setSourceIdCol, sourceMatchCol, setSourceMatchCol, sourceHierarchy, setSourceHierarchy,
     targetFile, setTargetFile, targetIdCol, setTargetIdCol, targetMatchCol, setTargetMatchCol, targetHierarchy, setTargetHierarchy,
-    shape, setShape, chainSteps, setChainSteps, setToast, setActiveTab,
+    shape, setShape, chainSteps, setChainSteps, setToast, setActiveTab, expectedFiles,
   } = props;
 
   function addStep() {
@@ -1111,6 +1214,17 @@ function TabSourcesShape(props) {
 
   return (
     <div className="p-5 max-w-5xl mx-auto flex flex-col gap-4">
+      {expectedFiles && (expectedFiles.source || expectedFiles.target || chainSteps.some((s) => s.expectedFile))
+        && (!sourceFile.fileId || !targetFile.fileId || chainSteps.some((s) => s.expectedFile && !s.file.fileId)) && (
+        <div className="card surf2 border p-3 text-xs">
+          <div className="font-semibold mb-1">The loaded configuration expects these files</div>
+          <div className="muted">
+            Source: {expectedFiles.source || "not specified"} &middot; Target: {expectedFiles.target || "not specified"}
+            {chainSteps.filter((s) => s.expectedFile).map((s, i) => <span key={s.id}> &middot; Step {i + 2}: {s.expectedFile}</span>)}
+          </div>
+          <div className="muted mt-1">Upload them below, or put them in the shared folder (RELINK_LIBRARY_DIR) and load the config again to attach them automatically.</div>
+        </div>
+      )}
       {(sourceFile.name === "No source file selected" || targetFile.name === "No target file selected") && (
         <div className="card surf2 border p-3 text-xs muted">
           Upload a source file and a target file below to get started, CSV, Excel, or GeoJSON both work. Files are parsed locally for the preview you see here, and also uploaded to the backend to actually run the matching pipeline.
@@ -1352,8 +1466,14 @@ function TabHierarchyMethods(props) {
     );
   }
 
+  const alreadyRecommended =
+    methodA && methodB && !methodC && methodD === bothHaveGeometry && methodE === (maxRows >= 10000) &&
+    autoApprove === 0.95 && needsReview === 0.80 && blockingFloor === 0.60 &&
+    keepDigits && stripParens && !caseSensitive;
+
   return (
     <div className="p-5 max-w-5xl mx-auto flex flex-col gap-4">
+      {!alreadyRecommended && (
       <div className="card surf2 border p-3.5 flex items-center justify-between gap-3">
         <div className="text-xs muted">
           Based on your files: {maxRows > 0 ? `${maxRows.toLocaleString()} rows, ` : ""}{bothHaveGeometry ? "geometry on both sides" : "no geometry on one or both sides"}.
@@ -1361,6 +1481,7 @@ function TabHierarchyMethods(props) {
         </div>
         <button onClick={applyRecommended} className="btn btn-primary text-xs font-medium px-3 py-1.5 flex-shrink-0">Use recommended settings</button>
       </div>
+      )}
 
       <div className="card surf border p-4">
         <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Hierarchy chain</div>
@@ -1660,7 +1781,7 @@ const KIND_META = {
   type_leak: { label: "Type leak", color: "var(--danger)", soft: "var(--danger-soft)" },
   low_confidence: { label: "Low confidence", color: "var(--warning)", soft: "var(--warning-soft)" },
   geometry_suspect: { label: "Geometry suspect", color: "var(--warning)", soft: "var(--warning-soft)" },
-  unmatched: { label: "Unmatched", color: null, soft: null },
+  unmatched: { label: "Unmatched", color: "var(--text-muted)", soft: "var(--surface-2)" },
   consensus: { label: "Consensus", color: "var(--success)", soft: "var(--success-soft)" },
 };
 
@@ -1765,15 +1886,31 @@ function MethodColumn({ label, engine, data, accent, isChosen, onChoose }) {
   );
 }
 
-function ConsensusIndicator({ row }) {
-  const candidates = Object.values(row.methods).filter((m) => m.targetId !== null);
-  const uniqueTargets = new Set(candidates.map((m) => m.targetId));
-  if (candidates.length === 0) return <span className="text-xs font-medium px-2.5 py-1 muted" style={{ borderRadius: 999, background: "var(--surface-2)" }}>No method matched</span>;
-  if (uniqueTargets.size === 1) return <span className="text-xs font-medium px-2.5 py-1" style={{ borderRadius: 999, background: "var(--success-soft)", color: "var(--success)" }}>{candidates.length}-way consensus</span>;
-  return <span className="text-xs font-medium px-2.5 py-1" style={{ borderRadius: 999, background: "var(--warning-soft)", color: "var(--warning)" }}>{uniqueTargets.size} distinct targets</span>;
+// How many of the enabled candidate methods found a target, and how many
+// distinct targets they named. Counts every enabled method, so a method that
+// found nothing counts against consensus instead of being silently ignored.
+function consensusInfo(row, keys) {
+  const pool = keys && keys.length ? keys : CANDIDATE_METHOD_KEYS;
+  const found = pool.filter((k) => row.methods[k] && row.methods[k].targetId !== null && row.methods[k].targetId !== undefined);
+  const targets = new Set(found.map((k) => row.methods[k].targetId));
+  return { enabled: pool.length, found: found.length, distinct: targets.size };
+}
+function isFullConsensus(row, keys) {
+  const i = consensusInfo(row, keys);
+  return i.enabled > 0 && i.found === i.enabled && i.distinct === 1;
+}
+
+function ConsensusIndicator({ row, keys }) {
+  const info = consensusInfo(row, keys);
+  const pill = (bg, color, text) => <span className="text-xs font-medium px-2.5 py-1" style={{ borderRadius: 999, background: bg, color }}>{text}</span>;
+  if (info.found === 0) return pill("var(--surface-2)", "var(--text-muted)", "No method matched");
+  if (info.distinct > 1) return pill("var(--warning-soft)", "var(--warning)", `${info.distinct} different targets from ${info.found} of ${info.enabled} methods`);
+  if (info.found === info.enabled) return pill("var(--success-soft)", "var(--success)", info.enabled === 1 ? "1 method, nothing to compare" : `All ${info.enabled} methods agree`);
+  return pill("var(--warning-soft)", "var(--warning)", `${info.found} of ${info.enabled} methods agree, ${info.enabled - info.found} found nothing`);
 }
 
 const FILTERS = [
+  { key: "attention", label: "Needs attention" },
   { key: "all", label: "All rows" },
   { key: "low_confidence", label: "Low confidence" },
   { key: "collision", label: "Collisions" },
@@ -1853,8 +1990,9 @@ function TabReviewQueue(props) {
   const {
     rows, selectedId, setSelectedId, note, setNote, setToast, sourceGeometry, sourceGeometryRows, sourceIdCol,
     patchReviewRow, geocodeLookup, pendingDecisions, merged, setActiveTab,
+    bulkReview, undoReview, setPendingDecisions, needsReview, trustMethod, setTrustMethod, trustThreshold, setTrustThreshold, customMethods,
   } = props;
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("attention");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
 
@@ -1863,25 +2001,57 @@ function TabReviewQueue(props) {
 
   const isDecided = (r) => r.approved || pendingDecisions[r.sourceId] === "rejected";
 
+  // Trusted method: rows where the method you trust is confident and nobody
+  // else disagrees are "clear". They leave the attention queue (you can still
+  // approve them in one click) so this tab only shows the actual outliers.
+  const trustActive = !!trustMethod && trustMethod !== "none" && candidateKeys.includes(trustMethod);
+  const trustFloor = Math.max(trustThreshold, needsReview);
+  const trustedRows = useMemo(() => {
+    if (!trustActive) return [];
+    return rows.filter((r) => {
+      if (isDecided(r)) return false;
+      if (r.kind === "collision" || r.kind === "type_leak" || r.kind === "geometry_suspect" || r.kind === "unmatched") return false;
+      const t = r.methods[trustMethod];
+      if (!t || t.targetId === null || t.score === null || t.score < trustFloor) return false;
+      return !candidateKeys.some((k) => {
+        const m = r.methods[k];
+        return k !== trustMethod && m && m.targetId !== null && m.targetId !== t.targetId && m.score !== null && m.score >= needsReview;
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, pendingDecisions, trustActive, trustMethod, trustFloor, needsReview, candidateKeys.join(",")]);
+  const trustedIdSet = useMemo(() => new Set(trustedRows.map((r) => r.sourceId)), [trustedRows]);
+  const needsAttention = (r) => !isDecided(r) && !trustedIdSet.has(r.sourceId);
+
   const counts = useMemo(() => ({
     all: rows.length,
+    attention: rows.filter(needsAttention).length,
     low_confidence: rows.filter((r) => r.kind === "low_confidence").length,
     collision: rows.filter((r) => r.kind === "collision").length,
     type_leak: rows.filter((r) => r.kind === "type_leak").length,
     geometry_suspect: rows.filter((r) => r.kind === "geometry_suspect").length,
     unmatched: rows.filter((r) => r.kind === "unmatched").length,
     approved: rows.filter((r) => r.approved).length,
-  }), [rows]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [rows, pendingDecisions, trustedIdSet]);
 
   const filteredRows = useMemo(() => rows.filter((r) => {
-    if (filter === "approved" && !r.approved) return false;
-    if (filter !== "all" && filter !== "approved" && r.kind !== filter) return false;
+    if (filter === "attention") { if (!needsAttention(r)) return false; }
+    else if (filter === "approved") { if (!r.approved) return false; }
+    else if (filter !== "all" && r.kind !== filter) return false;
     if (search) {
       const q = search.toLowerCase();
       if (!r.sourceName.toLowerCase().includes(q) && !r.sourceId.includes(q)) return false;
     }
     return true;
-  }), [rows, filter, search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [rows, filter, search, pendingDecisions, trustedIdSet]);
+
+  // Switching filter should never leave you looking at a row that is not in the list.
+  useEffect(() => {
+    if (filteredRows.length && !filteredRows.some((r) => r.sourceId === selectedId)) setSelectedId(filteredRows[0].sourceId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
 
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -1897,6 +2067,23 @@ function TabReviewQueue(props) {
   function rejectRow() {
     patchReviewRow(selected.sourceId, { approved: false, chosen_method: null });
     setToast(`Row ${selected.sourceId} rejected. Will be written as unmatched.`);
+  }
+
+  async function approveTrusted() {
+    const ids = trustedRows.map((r) => r.sourceId);
+    if (ids.length === 0) return;
+    const undoToken = await bulkReview("approve", ids);
+    if (!undoToken) return;
+    setPendingDecisions((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => { next[id] = "approved"; });
+      return next;
+    });
+    const label = (METHOD_META[trustMethod] && METHOD_META[trustMethod].shortLabel) || trustMethod;
+    setToast({
+      message: `Approved ${ids.length} row(s) where ${label} scored ${Math.round(trustFloor * 100)}% or more and no other method disagreed.`,
+      undo: () => { undoReview(undoToken); setToast("Undone."); },
+    });
   }
 
   function goToNextUnreviewed() {
@@ -1968,6 +2155,27 @@ function TabReviewQueue(props) {
           <div className="p-3 border-b b">
             <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter rows..." className="w-full surf2 border b rounded-md text-sm px-3 py-2" style={{ color: "var(--text)" }} />
           </div>
+          <div className="p-3 border-b b flex flex-col gap-2">
+            <div className="text-xs font-semibold muted uppercase tracking-wide">Trusted method</div>
+            <div className="flex items-center gap-2">
+              <select
+                value={trustActive ? trustMethod : "none"} onChange={(e) => setTrustMethod(e.target.value)}
+                className="surf2 border b rounded-md text-xs px-2 py-1.5 flex-1" style={{ color: "var(--text)" }}
+              >
+                <option value="none">None, show every row</option>
+                {candidateKeys.map((k) => <option key={k} value={k}>{METHOD_META[k].shortLabel}</option>)}
+              </select>
+              {trustActive && <NumberStepper value={trustThreshold} setValue={setTrustThreshold} />}
+            </div>
+            {trustActive && (
+              <div className="text-xs muted">
+                {trustedRows.length} clear row(s) hidden: {METHOD_META[trustMethod].shortLabel} scored {Math.round(trustFloor * 100)}% or more and no other method disagreed.
+                {trustedRows.length > 0 && (
+                  <button onClick={approveTrusted} className="btn btn-success text-xs font-medium px-3 py-1.5 mt-2 w-full">Approve these {trustedRows.length}</button>
+                )}
+              </div>
+            )}
+          </div>
           <div className="flex flex-wrap gap-1.5 p-2 border-b b">
             {FILTERS.map((f) => (
               <button key={f.key} onClick={() => setFilter(f.key)} className="btn text-xs font-medium px-2.5 py-1 flex items-center gap-1" style={filter === f.key ? { background: "var(--primary-soft)", color: "var(--primary)" } : { color: "var(--text)" }}>
@@ -2027,7 +2235,7 @@ function TabReviewQueue(props) {
             <div className="text-xs font-semibold muted uppercase tracking-wide">
               {candidateKeys.length}-method comparison
             </div>
-            <ConsensusIndicator row={selected} />
+            <ConsensusIndicator row={selected} keys={candidateKeys} />
           </div>
 
           {candidateKeys.length === 0 ? (
@@ -2048,6 +2256,9 @@ function TabReviewQueue(props) {
             </div>
           )}
           <div className="text-xs muted mt-2">Click a method card to select it as the final match for this row.</div>
+          {customMethods && customMethods.some((m) => m.enabled) && (
+            <div className="text-xs muted mt-1">Custom methods are not counted here: the backend never runs user scripts, so they produce no candidates.</div>
+          )}
         </div>
 
         <div className="surf border-l flex flex-col overflow-y-auto">
@@ -2200,8 +2411,7 @@ function TabApproveFinalize(props) {
   async function approveAllConsensus() {
     const targets = rows.filter((r) => {
       const candidates = Object.values(r.methods).filter((m) => m.targetId !== null);
-      const uniqueTargets = new Set(candidates.map((m) => m.targetId));
-      return candidates.length >= 2 && uniqueTargets.size === 1 && r.kind !== "collision" && !r.approved;
+      return isFullConsensus(r, candidateKeys) && r.kind !== "collision" && !r.approved;
     });
     if (targets.length === 0) { setToast("No unapproved consensus rows to approve."); return; }
     const undoToken = await bulkReview("approve", targets.map((r) => r.sourceId));
@@ -2304,8 +2514,44 @@ function TabApproveFinalize(props) {
   function approveByThreshold() {
     approveByIds(thresholdMatches.map((r) => r.sourceId), `Approved ${thresholdMatches.length} row(s) scoring ${thresholdPct}% or above.`);
   }
-  function signOffKind(kind, list) {
-    approveByIds(list.map((r) => r.sourceId), `Signed off all ${list.length} ${(KIND_META[kind] && KIND_META[kind].label) || kind} row(s).`);
+  // Categories where approving everything is most likely to be wrong. The
+  // single-category button asks for a second click, and a multi-category
+  // approve asks for confirmation.
+  const RISKY_KINDS = ["collision", "type_leak", "geometry_suspect", "low_confidence"];
+  const KIND_WARNING = {
+    collision: "These rows share a target with another row. Approving all of them links every one to that same target.",
+    type_leak: "The matched target is in a different category than the one you are linking against.",
+    geometry_suspect: "The matched target sits unusually far from the source record.",
+    low_confidence: "The best score is below your review floor, so these are the likeliest to be wrong.",
+  };
+  const [confirmKind, setConfirmKind] = useState(null);
+  const [selectedKinds, setSelectedKinds] = useState(() => new Set());
+  function toggleKind(kind) {
+    setSelectedKinds((prev) => { const next = new Set(prev); if (next.has(kind)) next.delete(kind); else next.add(kind); return next; });
+  }
+  function approveKind(kind, list) {
+    setConfirmKind(null);
+    approveByIds(list.map((r) => r.sourceId), `Approved all ${list.length} ${((KIND_META[kind] && KIND_META[kind].label) || kind).toLowerCase()} row(s).`);
+  }
+  async function rejectKind(kind, list) {
+    const ids = list.map((r) => r.sourceId);
+    const undoToken = await bulkReview("reject", ids);
+    if (!undoToken) return;
+    setPendingDecisions((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => { next[id] = "rejected"; });
+      return next;
+    });
+    setToast({ message: `Rejected ${ids.length} ${((KIND_META[kind] && KIND_META[kind].label) || kind).toLowerCase()} row(s).`, undo: () => { undoReview(undoToken); setToast("Undone."); } });
+  }
+  function approveSelectedKinds() {
+    const groups = needsYouByKind.filter((g) => selectedKinds.has(g.kind) && g.kind !== "unmatched");
+    const ids = groups.flatMap((g) => g.rows.map((r) => r.sourceId));
+    if (ids.length === 0) return;
+    const risky = groups.filter((g) => RISKY_KINDS.includes(g.kind)).map((g) => ((KIND_META[g.kind] && KIND_META[g.kind].label) || g.kind).toLowerCase());
+    if (risky.length && !window.confirm(`This includes ${risky.join(", ")} rows, which are the ones most likely to be wrong. Approve them anyway?`)) return;
+    approveByIds(ids, `Approved ${ids.length} row(s) from ${groups.length} categor${groups.length === 1 ? "y" : "ies"}.`);
+    setSelectedKinds(new Set());
   }
   function approveAllSafe() {
     approveByIds(safeRows.map((r) => r.sourceId), `Approved ${safeRows.length} row(s) with full method agreement, nothing to review there.`);
@@ -2396,20 +2642,23 @@ function TabApproveFinalize(props) {
       </div>
 
       {statusFilter === "undecided" && undecidedCount > 0 && (
-        <div className="border-b b px-5 py-1.5" style={{ flexShrink: 0 }}>
-          <button onClick={() => setTriageOpen(!triageOpen)} className="text-xs font-semibold muted uppercase tracking-wide">
-            Bulk actions {triageOpen ? "\u25BE" : "\u25B8"}
+        <div className="surf2 border-b b px-5 py-2.5" style={{ flexShrink: 0 }}>
+          <button onClick={() => setTriageOpen(!triageOpen)} className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex items-center gap-2">
+            <span>Bulk actions</span>
+            <span className="muted">{triageOpen ? "\u25BE" : "\u25B8"}</span>
           </button>
           {triageOpen && (
-            <div className="mt-3 flex flex-col gap-2.5">
-              <div className="flex gap-2.5 items-stretch flex-wrap">
-                <div className="card surf2 border p-3.5" style={{ flex: "1 1 320px" }}>
-                  <div className="text-sm font-medium mb-0.5">Approve everything at or above a score</div>
-                  <div className="text-xs muted mb-2">starts from your Hierarchy &amp; methods threshold, dragging here won't change that setting</div>
+            <div className="mt-3 flex flex-col gap-3" style={{ maxHeight: "42vh", overflowY: "auto", paddingRight: 4 }}>
+              <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+                <div className="card surf border p-3.5 flex flex-col gap-2.5">
+                  <div>
+                    <div className="text-sm font-medium">Approve by score</div>
+                    <div className="text-xs muted mt-0.5">Approves every undecided row whose best score is at or above this value. Starts from your Hierarchy &amp; methods setting, changing it here does not change that setting.</div>
+                  </div>
                   <div className="flex items-center gap-3">
                     <input
                       type="range" min="0" max="100" value={thresholdPct} onChange={(e) => setThresholdPct(Number(e.target.value))}
-                      style={{ flex: 1, accentColor: "var(--primary)", "--track-fill": `linear-gradient(to right, var(--primary) 0%, var(--primary) ${thresholdPct}%, var(--border) ${thresholdPct}%, var(--border) 100%)` }}
+                      style={{ flex: 1, maxWidth: 260, accentColor: "var(--primary)", "--track-fill": `linear-gradient(to right, var(--primary) 0%, var(--primary) ${thresholdPct}%, var(--border) ${thresholdPct}%, var(--border) 100%)` }}
                     />
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <input
@@ -2426,16 +2675,16 @@ function TabApproveFinalize(props) {
                       className="btn btn-success text-xs font-medium px-3 py-1.5 flex-shrink-0"
                       style={thresholdMatches.length === 0 ? { opacity: 0.5, cursor: "not-allowed" } : {}}
                     >
-                      Approve {thresholdMatches.length} row(s)
+                      Approve {thresholdMatches.length}
                     </button>
                   </div>
                 </div>
 
                 {safeRows.length > 0 && (
-                  <div className="card border p-3.5 flex flex-col justify-between gap-2" style={{ flex: "1 1 260px", borderColor: "var(--success-border)", background: "var(--success-soft)" }}>
+                  <div className="card surf border p-3.5 flex flex-col justify-between gap-2.5">
                     <div>
-                      <div className="text-sm font-medium">Safe to bulk-approve: {safeRows.length} row(s)</div>
-                      <div className="text-xs muted mt-0.5">Heuristic, not a judgment call: full agreement across every method that returned a candidate, not a collision.</div>
+                      <div className="text-sm font-medium">No method disagrees: {safeRows.length} row(s)</div>
+                      <div className="text-xs muted mt-0.5">At least two methods found the same target and none point somewhere else. Not a collision.</div>
                     </div>
                     <button onClick={approveAllSafe} className="btn btn-success text-xs font-medium px-3 py-1.5 self-start">Approve all {safeRows.length}</button>
                   </div>
@@ -2444,18 +2693,54 @@ function TabApproveFinalize(props) {
 
               {needsYouByKind.length > 0 && (
                 <div>
-                  <div className="text-xs font-semibold muted uppercase tracking-wide mb-2">Needs a look, by category</div>
-                  <div className="flex flex-col gap-2">
-                    {needsYouByKind.map(({ kind, rows: list, avg }) => (
-                      <div key={kind} className="card border p-3 flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-2.5">
-                          <KindBadge kind={kind} />
-                          <span className="text-sm">{list.length} row(s){avg !== null ? `, avg score ${(avg * 100).toFixed(0)}%` : ""}</span>
-                        </div>
-                        <button onClick={() => signOffKind(kind, list)} className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex-shrink-0">Sign off all {list.length}</button>
-                      </div>
-                    ))}
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div className="text-xs font-semibold muted uppercase tracking-wide">Rows that need a look, by category</div>
+                    <div className="text-xs muted">Approve one category, or tick several and approve them together.</div>
                   </div>
+                  <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
+                    {needsYouByKind.map(({ kind, rows: list, avg }) => {
+                      const risky = RISKY_KINDS.includes(kind);
+                      const canApprove = kind !== "unmatched";
+                      const armed = confirmKind === kind;
+                      return (
+                        <div key={kind} className="card surf border p-3 flex flex-col gap-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              {canApprove && (
+                                <input type="checkbox" checked={selectedKinds.has(kind)} onChange={() => toggleKind(kind)} title="Include in the combined approve below" />
+                              )}
+                              <KindBadge kind={kind} />
+                              <span className="text-sm">{list.length} row(s){avg !== null ? `, avg ${(avg * 100).toFixed(0)}%` : ""}</span>
+                            </div>
+                            {canApprove ? (
+                              <button
+                                onClick={() => { if (risky && !armed) { setConfirmKind(kind); return; } approveKind(kind, list); }}
+                                className="btn btn-success text-xs font-medium px-3 py-1.5 flex-shrink-0"
+                              >
+                                {armed ? `Yes, approve ${list.length}` : `Approve all ${list.length}`}
+                              </button>
+                            ) : (
+                              <button onClick={() => rejectKind(kind, list)} className="btn btn-danger text-xs font-medium px-3 py-1.5 flex-shrink-0" title="These have no candidate target, so they cannot be approved.">Reject all {list.length}</button>
+                            )}
+                          </div>
+                          {armed && (
+                            <div className="text-xs flex items-center justify-between gap-3" style={{ color: "var(--warning)" }}>
+                              <span>{KIND_WARNING[kind]}</span>
+                              <button onClick={() => setConfirmKind(null)} className="muted flex-shrink-0" style={{ background: "none", border: "none", textDecoration: "underline", padding: 0 }}>Cancel</button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {selectedKinds.size > 0 && (
+                    <div className="flex items-center justify-between gap-3 mt-3">
+                      <span className="text-xs muted">
+                        {needsYouByKind.filter((g) => selectedKinds.has(g.kind)).reduce((n, g) => n + g.rows.length, 0)} row(s) in {selectedKinds.size} ticked categor{selectedKinds.size === 1 ? "y" : "ies"}
+                      </span>
+                      <button onClick={approveSelectedKinds} className="btn btn-success text-xs font-medium px-3 py-1.5">Approve ticked categories</button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2464,7 +2749,7 @@ function TabApproveFinalize(props) {
       )}
 
       <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 340px" }}>
-        <div className="overflow-y-auto p-5 flex flex-col gap-3" style={{ maxWidth: "920px" }}>
+        <div className="overflow-y-auto p-5 flex flex-col gap-3" style={{ minWidth: 0 }}>
           {visibleRows.map((r) => {
             const decided = isDecided(r);
             const rejected = isRejected(r);
@@ -2479,7 +2764,7 @@ function TabApproveFinalize(props) {
               <div
                 key={r.sourceId}
                 className={"card border p-4 flex items-center justify-between gap-5" + (isExiting ? " rowExiting" : "")}
-                style={{ ...borderStyle, overflow: "hidden" }}
+                style={{ ...borderStyle, overflow: "hidden", flexShrink: 0 }}
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2.5 mb-1">
@@ -2508,17 +2793,17 @@ function TabApproveFinalize(props) {
         </div>
 
         <div className="surf border-l overflow-y-auto p-4">
-          <div className="text-sm font-semibold mb-1">Final answer preview</div>
+          <div className="text-sm font-semibold mb-1">Final list</div>
           <div className="text-xs muted mb-3">Updates live as you decide. Nothing is written until you merge.</div>
           <div className="card surf2 border p-3 mb-3">
-            <div className="text-xs muted mb-1">Rows that will be in the final answer</div>
+            <div className="text-xs muted mb-1">Included in the final list</div>
             <div className="text-2xl font-semibold">{approvedRows.length}</div>
           </div>
           <div className="flex flex-col gap-1.5">
             {approvedRows.map((r) => (
               <div key={r.sourceId} className="flex items-center justify-between text-xs py-1 border-b b">
                 <span className="truncate">{r.sourceName}</span>
-                <span style={{ color: "var(--success)" }}>in final answer</span>
+                <span style={{ color: "var(--success)" }}>&#10003;</span>
               </div>
             ))}
             {approvedRows.length === 0 && <div className="text-xs muted">Nothing approved yet.</div>}
@@ -2570,7 +2855,7 @@ function CoverageBar({ label, value, total, color }) {
 }
 
 function TabExportAudit(props) {
-  const { finalRows, totalSourceRows, setToast, reviewRows, sourceGeometry, sourceGeometryRows, sourceIdCol, exportViaBackend, projectId, auditLog, fetchAuditLog, merged, setActiveTab, configName, setConfigName, configVersion, configId, onDownloadConfig, customMethods, methodA, methodB, methodC, methodD, methodE, runLog, saveEvalSet, setSaveEvalSet, evalSet, setEvalSet, pendingDecisions } = props;
+  const { finalRows, totalSourceRows, setToast, reviewRows, sourceGeometry, sourceGeometryRows, sourceIdCol, exportViaBackend, projectId, auditLog, fetchAuditLog, merged, setActiveTab, configName, setConfigName, configVersion, setConfigVersion, configId, onDownloadConfig, customMethods, methodA, methodB, methodC, methodD, methodE, runLog, saveEvalSet, setSaveEvalSet, evalSet, setEvalSet, pendingDecisions } = props;
   const candidateKeys = enabledMethodKeys(props, { candidatesOnly: true });
   const [mode, setMode] = useState("replace");
   const [format, setFormat] = useState(null);
@@ -2588,10 +2873,10 @@ function TabExportAudit(props) {
     const finalIds = new Set(finalRows.map((r) => r.sourceId));
     return reviewRows.filter((r) => {
       if (!finalIds.has(r.sourceId)) return false;
-      const candidates = Object.values(r.methods).filter((m) => m.targetId !== null);
-      return candidates.length >= 2 && new Set(candidates.map((m) => m.targetId)).size === 1;
+      return isFullConsensus(r, candidateKeys);
     }).length;
-  }, [finalRows, reviewRows]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finalRows, reviewRows, candidateKeys.join(",")]);
 
   const filteredLog = useMemo(() => {
     if (!auditSearch) return auditLog;
@@ -2711,9 +2996,9 @@ function TabExportAudit(props) {
       </div>
 
       <div className="card surf border p-4">
-        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Other formats</div>
+        <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">Other formats (the CSV is the button above)</div>
         <div className="flex gap-3">
-          {["csv", "xlsx", "geojson"].map((fmt) => (
+          {["xlsx", "geojson"].map((fmt) => (
             <button key={fmt} onClick={() => doExport(fmt)} className="btn btn-ghost border text-sm font-medium px-5 py-2.5 flex-1">Download .{fmt}</button>
           ))}
         </div>
@@ -2767,6 +3052,7 @@ function TabExportAudit(props) {
             style={{ color: "var(--text)" }} placeholder="Name this configuration, e.g. Acme_Customer_Matching"
           />
           <span className="text-xs muted surf2 border b px-2 py-1.5 rounded-md flex-shrink-0">v{configVersion}</span>
+          <button onClick={() => setConfigVersion((v) => v + 1)} className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex-shrink-0" title="Downloading never changes the version. Bump it yourself when the settings meaningfully change.">New version</button>
           <button onClick={onDownloadConfig} className="btn btn-ghost text-xs font-medium px-3 py-1.5 flex-shrink-0">Download</button>
         </div>
         <div className="text-xs muted">
@@ -2774,49 +3060,7 @@ function TabExportAudit(props) {
         </div>
       </div>
 
-      {runLog.length > 0 && (
-        <div className="card surf border p-4">
-          <div className="text-xs font-semibold muted uppercase tracking-wide mb-3">How this was produced</div>
-          <div className="flex flex-col gap-2">
-            {runLog.slice(0, 3).map((r) => (
-              <div key={r.run_id} className="surf2 border b rounded-md px-3 py-2.5 text-xs">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold font-mono">{r.run_id}</span>
-                  <span className="muted">{new Date(r.timestamp).toLocaleString()}</span>
-                </div>
-                <div className="muted">{r.config_name} v{r.config_version} &middot; {r.row_count} row(s) &middot; {r.methods.join(", ") || "no methods enabled"}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      <div className="card surf border p-4">
-        <div className="flex items-center justify-between mb-1">
-          <div className="text-xs font-semibold muted uppercase tracking-wide">Evaluation set</div>
-          <label className="text-xs muted flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" checked={saveEvalSet} onChange={(e) => setSaveEvalSet(e.target.checked)} />
-            Save my review decisions as labeled examples
-          </label>
-        </div>
-        <div className="text-sm muted mb-3">
-          Off by default: a review decision only becomes a labeled example if you turn this on. Nothing is saved as training data without you explicitly choosing to.
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs muted">{evalSet.length} labeled example(s) saved this session.</span>
-          <button
-            onClick={() => {
-              downloadFile("relink_evaluation_set.json", JSON.stringify(evalSet, null, 2), "application/json");
-              setToast("Downloaded relink_evaluation_set.json.");
-            }}
-            disabled={evalSet.length === 0}
-            className="btn btn-ghost text-xs font-medium px-3 py-1.5"
-            style={evalSet.length === 0 ? { opacity: 0.5, cursor: "not-allowed" } : {}}
-          >
-            Download evaluation set
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -2896,7 +3140,7 @@ export default function RelinkStudio() {
   // the moment "what I'm sending someone" is fixed.
   const [configName, setConfigName] = useState("Untitled configuration");
   const [configVersion, setConfigVersion] = useState(1);
-  const [configId] = useState(() => `cfg_${Math.random().toString(36).slice(2, 10)}`);
+  const [configId, setConfigId] = useState(() => `cfg_${Math.random().toString(36).slice(2, 10)}`);
   // Run metadata: enough to answer "how was this result produced" later,
   // without a full run-history UI. runLog is local-only for now (see the
   // backend note); a real backend would persist this per project/run.
@@ -2912,50 +3156,151 @@ export default function RelinkStudio() {
   // would offer to bulk-approve, immediately after the pipeline finishes,
   // and drops straight onto the short needs-you list.
   const [fastMode, setFastMode] = useState(false);
+  // Review queue: a method you trust, so the queue only shows real outliers.
+  const [trustMethod, setTrustMethod] = useState("none");
+  const [trustThreshold, setTrustThreshold] = useState(0.95);
+  // File names a loaded configuration expects (shown until they are attached).
+  const [expectedFiles, setExpectedFiles] = useState(null);
 
-  // Only the theme survived a refresh before this -- the project itself
-  // was gone the moment the tab reloaded, even though the backend still
-  // had it and every decision made against it. This is the fix: the
-  // backend project id (nothing else, no file contents) persists, and an
-  // accidental refresh becomes a one-click "resume" instead of starting
-  // over from an empty Sources & shape tab.
-  const RESUME_KEY = "relink_studio_last_project";
-  const [resumeInfo, setResumeInfo] = useState(() => {
-    try {
-      const raw = localStorage.getItem(RESUME_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+  /* Session persistence. Everything on screen (files, columns, settings, the  */
+  /* current project, which tab you were on) is saved in this browser and put */
+  /* back after a refresh. File CONTENTS are never stored in the browser: the */
+  /* backend already has them, so only the file ids are kept and re-checked.  */
+  const SESSION_KEY = "relink_studio_session_v1";
+  const [sessionReady, setSessionReady] = useState(false);
+  const skipSave = useRef(false);
+  // methodStatus() reads thresholds from here so rows loaded during a restore
+  // are labelled with the restored thresholds, not the defaults.
+  const thresholdsRef = useRef({ autoApprove: 0.95, needsReview: 0.8 });
+  thresholdsRef.current = { autoApprove, needsReview };
+
+  const emptyFile = (label) => ({
+    name: label ? `No ${label} file selected` : "No file selected", format: "-", rowCount: 0,
+    columns: ["(upload a file to see columns)"], geometry: null, geometryRows: null, fileId: null, uploadError: null,
   });
-  const [resumeDismissed, setResumeDismissed] = useState(false);
+  const slimFile = (f) => ({ name: f.name, format: f.format, rowCount: f.rowCount, columns: f.columns, fileId: f.fileId });
+  const decisionsFromRows = (rows) => Object.fromEntries(rows.filter((r) => r.decision === "rejected").map((r) => [r.sourceId, "rejected"]));
+
+  // Re-reads a file from the backend by id. Returns {missing: true} only when
+  // the backend says it is gone. If the backend is just unreachable the saved
+  // description is kept, so a refresh while it is down does not lose your setup.
+  async function hydrateFile(meta, label) {
+    if (!meta || !meta.fileId) return { ...emptyFile(label), ...(meta || {}), geometry: null, geometryRows: null, uploadError: null };
+    try {
+      const res = await apiJson(`/upload/${meta.fileId}${meta.format === "geojson" ? "?geometry=1" : ""}`);
+      return {
+        name: res.filename, format: res.format, rowCount: res.row_count, columns: res.columns,
+        geometry: res.geometry || null, geometryRows: res.rows || null, fileId: res.file_id, uploadError: null,
+      };
+    } catch (e) {
+      if (e && e.status === 404) return { missing: true };
+      return { ...meta, geometry: null, geometryRows: null, uploadError: null };
+    }
+  }
+
+  const sessionJson = JSON.stringify({
+    v: 1, activeTab, projectId, merged, reviewSelectedId,
+    sourceFile: slimFile(sourceFile), sourceIdCol, sourceMatchCol, sourceHierarchy,
+    targetFile: slimFile(targetFile), targetIdCol, targetMatchCol, targetHierarchy,
+    shape,
+    chainSteps: chainSteps.map((s) => ({ id: s.id, file: slimFile(s.file), idCol: s.idCol, matchCol: s.matchCol, hierarchy: s.hierarchy, expectedFile: s.expectedFile || "" })),
+    autoApprove, needsReview, methodA, methodB, methodC, methodD, methodE, customMethods,
+    blockingFloor, keepDigits, stripParens, stripSuffixWords, caseSensitive,
+    collisionGuard, allowManyToOne, excludePattern, typeColumn, typeExpected, strictZoneMatch,
+    autoDowngradeTies, requireHierarchyMatch, flagLowCoverageZones, sortOutputBy,
+    configName, configVersion, configId, fastMode, trustMethod, trustThreshold, expectedFiles,
+  });
 
   useEffect(() => {
-    if (!projectId) return;
-    try {
-      localStorage.setItem(RESUME_KEY, JSON.stringify({
-        projectId,
-        sourceName: sourceFile.name,
-        targetName: targetFile.name,
-        savedAt: new Date().toISOString(),
-      }));
-    } catch { /* private browsing etc, non-fatal */ }
-  }, [projectId]);
+    try { localStorage.removeItem("relink_studio_last_project"); } catch { /* non-fatal */ }
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { saved = null; }
+    if (!saved || saved.v !== 1) { setSessionReady(true); return undefined; }
+    let cancelled = false;
+    (async () => {
+      try {
+        [
+          [setSourceIdCol, "sourceIdCol"], [setSourceMatchCol, "sourceMatchCol"], [setSourceHierarchy, "sourceHierarchy"],
+          [setTargetIdCol, "targetIdCol"], [setTargetMatchCol, "targetMatchCol"], [setTargetHierarchy, "targetHierarchy"],
+          [setShape, "shape"], [setAutoApprove, "autoApprove"], [setNeedsReview, "needsReview"],
+          [setMethodA, "methodA"], [setMethodB, "methodB"], [setMethodC, "methodC"], [setMethodD, "methodD"], [setMethodE, "methodE"],
+          [setCustomMethods, "customMethods"], [setBlockingFloor, "blockingFloor"], [setKeepDigits, "keepDigits"],
+          [setStripParens, "stripParens"], [setStripSuffixWords, "stripSuffixWords"], [setCaseSensitive, "caseSensitive"],
+          [setCollisionGuard, "collisionGuard"], [setAllowManyToOne, "allowManyToOne"], [setExcludePattern, "excludePattern"],
+          [setTypeColumn, "typeColumn"], [setTypeExpected, "typeExpected"], [setStrictZoneMatch, "strictZoneMatch"],
+          [setAutoDowngradeTies, "autoDowngradeTies"], [setRequireHierarchyMatch, "requireHierarchyMatch"],
+          [setFlagLowCoverageZones, "flagLowCoverageZones"], [setSortOutputBy, "sortOutputBy"],
+          [setConfigName, "configName"], [setConfigVersion, "configVersion"], [setConfigId, "configId"],
+          [setFastMode, "fastMode"], [setTrustMethod, "trustMethod"], [setTrustThreshold, "trustThreshold"], [setExpectedFiles, "expectedFiles"],
+        ].forEach(([set, key]) => { if (saved[key] !== undefined && saved[key] !== null) set(saved[key]); });
+        thresholdsRef.current = {
+          autoApprove: saved.autoApprove ?? thresholdsRef.current.autoApprove,
+          needsReview: saved.needsReview ?? thresholdsRef.current.needsReview,
+        };
 
-  async function resumeLastProject() {
-    if (!resumeInfo) return;
-    setToast("Resuming your last project...");
-    try {
-      const rows = await fetchAllReviewRows(resumeInfo.projectId);
-      setProjectId(resumeInfo.projectId);
-      setReviewRows(rows);
-      setReviewSelectedId(rows[0]?.sourceId ?? null);
-      setPendingDecisions({});
-      setActiveTab(4);
-      setToast(`Resumed: ${rows.length} row(s) loaded.`);
-    } catch (e) {
-      setToast(`Couldn't resume that project, it may no longer exist on the backend: ${e.message}`);
-      try { localStorage.removeItem(RESUME_KEY); } catch { /* non-fatal */ }
-      setResumeInfo(null);
-    }
+        const lost = [];
+        const [src, tgt] = await Promise.all([hydrateFile(saved.sourceFile, "source"), hydrateFile(saved.targetFile, "target")]);
+        if (cancelled) return;
+        if (src.missing) { lost.push(saved.sourceFile.name); setSourceFile(emptyFile("source")); setSourceIdCol(""); setSourceMatchCol(""); }
+        else setSourceFile(src);
+        if (tgt.missing) { lost.push(saved.targetFile.name); setTargetFile(emptyFile("target")); setTargetIdCol(""); setTargetMatchCol(""); }
+        else setTargetFile(tgt);
+
+        const steps = await Promise.all((saved.chainSteps || []).map(async (s) => {
+          const f = await hydrateFile(s.file, "");
+          if (f.missing) lost.push(s.file.name);
+          return {
+            id: s.id, file: f.missing ? emptyFile("") : f,
+            idCol: f.missing ? "" : s.idCol, matchCol: f.missing ? "" : s.matchCol, hierarchy: s.hierarchy || [],
+            expectedFile: s.expectedFile || (f.missing ? s.file.name : ""),
+          };
+        }));
+        if (cancelled) return;
+        setChainSteps(steps);
+
+        let projectRestored = false;
+        if (saved.projectId) {
+          try {
+            const rows = await fetchAllReviewRows(saved.projectId);
+            if (cancelled) return;
+            setProjectId(saved.projectId);
+            setReviewRows(rows);
+            setReviewSelectedId(rows.some((r) => r.sourceId === saved.reviewSelectedId) ? saved.reviewSelectedId : (rows[0]?.sourceId ?? null));
+            setPendingDecisions(decisionsFromRows(rows));
+            setMerged(!!saved.merged && rows.length > 0);
+            projectRestored = true;
+          } catch (e) {
+            if (!(e && e.status === 404)) { setProjectId(saved.projectId); setMerged(!!saved.merged); }
+            else lost.push("your last run's results");
+          }
+        }
+        const needsProject = saved.activeTab >= 3;
+        setActiveTab(needsProject && !projectRestored && !saved.projectId ? 0 : (saved.activeTab || 0));
+        if (lost.length) setToast(`Restored your session, but ${lost.join(" and ")} no longer exist${lost.length === 1 ? "s" : ""} on the backend. Upload again or run the pipeline again.`);
+        else if (src.fileId || tgt.fileId || projectRestored) setToast("Restored where you left off.");
+      } finally {
+        if (!cancelled) setSessionReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Autosave, but only after the restore above has finished, so the empty
+  // defaults of a fresh page never overwrite what is saved.
+  useEffect(() => {
+    if (!sessionReady || skipSave.current) return undefined;
+    const t = setTimeout(() => {
+      try { localStorage.setItem(SESSION_KEY, sessionJson); } catch { /* private mode or quota, non-fatal */ }
+    }, 150);
+    return () => clearTimeout(t);
+  }, [sessionJson, sessionReady]);
+
+  function startNewProject() {
+    if (!window.confirm("Start a new project? The files and settings on this screen are cleared. Nothing already saved on the backend is deleted.")) return;
+    skipSave.current = true;
+    try { localStorage.removeItem(SESSION_KEY); } catch { /* non-fatal */ }
+    window.location.reload();
   }
 
   /* Backend connection: address, auth session, and live /health status -- */
@@ -3007,17 +3352,52 @@ export default function RelinkStudio() {
     setToast("Signed out.");
   }
 
+  // The very first account has to be created from the machine running Relink,
+  // and it becomes the lead. The backend refuses anything else with a clear message.
+  async function handleRegister(username, password) {
+    await apiJson("/auth/register", { method: "POST", body: JSON.stringify({ username, password, role: "lead" }) });
+    await handleLogin(username, password);
+  }
+
+  // Asks the backend to restart itself in the other mode, then waits for it.
+  async function handleSwitchMode(mode) {
+    setToast(mode === "lan" ? "Turning on team sharing, restarting..." : "Switching back to this computer only, restarting...");
+    try {
+      await apiJson("/admin/switch-mode", { method: "POST", body: JSON.stringify({ mode }) });
+    } catch (e) {
+      setToast(`Could not switch: ${e.message}`);
+      return;
+    }
+    for (let i = 0; i < 40; i += 1) {
+      await new Promise((r) => setTimeout(r, 750));
+      try {
+        const h = await checkBackendHealth();
+        if (h.mode === mode) {
+          setHealth(h); setHealthError(null);
+          if (mode === "local") { setAuthToken(null); setAuthTokenState(null); setAuthUser(null); }
+          setToast(mode === "lan"
+            ? "Team sharing is on. Open the connection panel to create the first account, then share the network link."
+            : "Back to this computer only.");
+          return;
+        }
+      } catch { /* still restarting */ }
+    }
+    setToast("The backend did not come back in time. Check relink.log in the project folder.");
+  }
+
   const connection = {
     apiBase: apiBaseState, onApiBaseChange: handleApiBaseChange,
     health, healthError, isChecking: isCheckingHealth, onRefresh: refreshHealth,
     isAuthenticated: !!authToken, authUser, onLogin: handleLogin, onLogout: handleLogout,
+    onSwitchMode: handleSwitchMode, onRegister: handleRegister,
   };
   const pollTimer = useRef(null);
 
   function methodStatus(score) {
     if (score === null || score === undefined) return null;
-    if (score >= autoApprove) return "auto_approved";
-    if (score < needsReview) return "no_match";
+    const t = thresholdsRef.current;
+    if (score >= t.autoApprove) return "auto_approved";
+    if (score < t.needsReview) return "no_match";
     return "needs_review";
   }
 
@@ -3321,7 +3701,34 @@ export default function RelinkStudio() {
     const fileSlug = configName.trim().replace(/\s+/g, "_").replace(/[^\w-]/g, "") || "relink_studio_config";
     downloadFile(`${fileSlug}_v${configVersion}.json`, JSON.stringify(pkg, null, 2), "application/json");
     setToast(`Downloaded ${fileSlug}_v${configVersion}.json. Anyone can upload this to reproduce your exact setup (never your actual data).`);
-    setConfigVersion((v) => v + 1);
+  }
+
+  // If the backend has a shared folder (RELINK_LIBRARY_DIR) and it holds the
+  // files a configuration names, attach them so a teammate's config just works.
+  async function attachFromLibrary(c) {
+    let lib;
+    try { lib = await apiJson("/library"); } catch { return; }
+    if (!lib || !lib.enabled) return;
+    const have = new Set(lib.files.map((f) => f.name));
+    const pull = async (name) => {
+      if (!name || !have.has(name)) return null;
+      try {
+        const up = await apiJson("/library/import", { method: "POST", body: JSON.stringify({ filename: name }) });
+        const f = await hydrateFile({ fileId: up.file_id, format: up.format }, "");
+        return f.missing ? null : f;
+      } catch { return null; }
+    };
+    let attached = 0;
+    const src = await pull(c.source && c.source.file);
+    if (src) { setSourceFile(src); attached += 1; }
+    const tgt = await pull(c.target && c.target.file);
+    if (tgt) { setTargetFile(tgt); attached += 1; }
+    const steps = c.chain_steps || [];
+    for (let i = 0; i < steps.length; i += 1) {
+      const f = await pull(steps[i].file);
+      if (f) { attached += 1; setChainSteps((prev) => prev.map((st, idx) => (idx === i ? { ...st, file: f } : st))); }
+    }
+    if (attached) setToast(`Attached ${attached} file(s) from the shared folder.`);
   }
 
   function handleUploadConfig(e) {
@@ -3368,6 +3775,7 @@ export default function RelinkStudio() {
             id: s.step_id || `step_${Date.now()}_${i}`,
             file: { name: "No file selected", format: "-", rowCount: 0, columns: ["(upload a file to see columns)"], geometry: null, geometryRows: null, fileId: null, uploadError: null },
             idCol: s.id_column || "", matchCol: s.match_column || "", hierarchy: s.hierarchy || [],
+            expectedFile: s.file || "",
           })));
         }
         if (c.methods) {
@@ -3396,6 +3804,8 @@ export default function RelinkStudio() {
           setFlagLowCoverageZones(c.safety.flag_low_coverage_zones ?? flagLowCoverageZones);
         }
         if (c.output) setSortOutputBy(c.output.sort_by ?? sortOutputBy);
+        setExpectedFiles({ source: (c.source && c.source.file) || "", target: (c.target && c.target.file) || "" });
+        attachFromLibrary(c);
         setToast(isPackage ? `Loaded "${raw.name}" v${raw.version}. Setup now matches that configuration.` : `Loaded configuration from ${file.name}. Setup now matches the file you uploaded.`);
       } catch (err) {
         setToast(`Could not read ${file.name}: not a valid ReLink Studio config file.`);
@@ -3422,7 +3832,8 @@ export default function RelinkStudio() {
     setToast, setActiveTab,
     projectId, patchReviewRow, bulkReview, undoReview, geocodeLookup,
     exportViaBackend, auditLog, fetchAuditLog,
-    configName, setConfigName, configVersion, configId, onDownloadConfig: handleDownloadConfig,
+    configName, setConfigName, configVersion, setConfigVersion, configId, onDownloadConfig: handleDownloadConfig,
+    trustMethod, setTrustMethod, trustThreshold, setTrustThreshold, expectedFiles,
     runLog, saveEvalSet, setSaveEvalSet, evalSet, setEvalSet,
   };
 
@@ -3460,20 +3871,7 @@ export default function RelinkStudio() {
     <div data-theme={theme} className="rls" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{TOKENS_CSS}</style>
       {toast && <Toast toast={toast} onDone={() => setToast(null)} />}
-      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} connection={connection} fastMode={fastMode} setFastMode={setFastMode} />
-
-      {resumeInfo && !resumeDismissed && resumeInfo.projectId !== projectId && (
-        <div className="surf border-b b px-5 py-2.5 flex items-center justify-between gap-3" style={{ flexShrink: 0, background: "var(--primary-soft)" }}>
-          <div className="text-xs">
-            <span className="font-semibold">Resume your last project?</span>{" "}
-            <span className="muted">{resumeInfo.sourceName} &harr; {resumeInfo.targetName}, saved {new Date(resumeInfo.savedAt).toLocaleString()}.</span>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button onClick={resumeLastProject} className="btn btn-primary text-xs font-medium px-3 py-1.5">Resume</button>
-            <button onClick={() => setResumeDismissed(true)} className="btn btn-ghost text-xs font-medium px-2 py-1.5">Dismiss</button>
-          </div>
-        </div>
-      )}
+      <TopBar theme={theme} setTheme={setTheme} activeTab={activeTab} setActiveTab={setActiveTab} onDownloadConfig={handleDownloadConfig} onUploadConfig={handleUploadConfig} setToast={setToast} sourceFile={sourceFile} targetFile={targetFile} onExecutePipeline={runPipeline} isRunning={isRunning} canRun={!!(sourceFile.fileId && targetFile.fileId)} merged={merged} connection={connection} fastMode={fastMode} setFastMode={setFastMode} onNewProject={startNewProject} />
 
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         {activeTab === 0 && <TabSourcesShape {...tabProps} />}

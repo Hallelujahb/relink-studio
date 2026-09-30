@@ -101,38 +101,55 @@ then
   die "port $port is already in use. Stop whatever is using it, or set RELINK_PORT to another port."
 fi
 
-step "Starting"
-"$API/venv/bin/python" "$API/run.py" >"$ROOT/relink.log" 2>&1 &
-pid=$!
-trap 'kill "$pid" 2>/dev/null || true' EXIT INT TERM
+export RELINK_RESTART_FILE="$ROOT/.relink_restart"
+rm -f "$RELINK_RESTART_FILE"
+pid=""
+trap 'kill "$pid" 2>/dev/null || true; rm -f "$RELINK_RESTART_FILE"' EXIT INT TERM
 
-ready=0
-for _ in $(seq 1 60); do
-  kill -0 "$pid" 2>/dev/null || break
-  if python3 -c "import urllib.request; urllib.request.urlopen('http://$probe_host:$port/health', timeout=1)" 2>/dev/null; then
-    ready=1; break
+while true; do
+  export RELINK_MODE="$mode"
+  step "Starting ($mode)"
+  "$API/venv/bin/python" "$API/run.py" >>"$ROOT/relink.log" 2>&1 &
+  pid=$!
+
+  ready=0
+  for _ in $(seq 1 60); do
+    kill -0 "$pid" 2>/dev/null || break
+    if python3 -c "import urllib.request; urllib.request.urlopen('http://$probe_host:$port/health', timeout=1)" 2>/dev/null; then
+      ready=1; break
+    fi
+    sleep 0.5
+  done
+  if [ "$ready" != "1" ]; then
+    echo "The backend did not come up. Last lines of relink.log:" >&2
+    tail -n 20 "$ROOT/relink.log" >&2
+    exit 1
   fi
-  sleep 0.5
-done
-if [ "$ready" != "1" ]; then
-  echo "The backend did not come up. Last lines of relink.log:" >&2
-  tail -n 20 "$ROOT/relink.log" >&2
-  exit 1
-fi
 
-echo
-echo "Relink Studio is running."
-echo
-echo "  Open:  http://$probe_host:$port"
-if [ "$mode" = "lan" ]; then
-  ip="$(python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('8.8.8.8', 80)); print(s.getsockname()[0])" 2>/dev/null || true)"
-  [ -n "$ip" ] && echo "  LAN:   http://$ip:$port"
   echo
-  echo "LAN mode requires a login. The first account has to be created from this machine:"
-  echo "  curl -X POST http://127.0.0.1:$port/api/auth/register -H 'Content-Type: application/json' \\"
-  echo "       -d '{\"username\":\"you\",\"password\":\"at-least-8-chars\",\"role\":\"lead\"}'"
-  echo "Only use LAN mode on a network you trust, and never forward the port to the internet."
-fi
-echo
-echo "Logs: relink.log    Stop: Ctrl-C"
-wait "$pid"
+  echo "Relink Studio is running."
+  echo
+  echo "  Open:  http://$probe_host:$port"
+  if [ "$mode" = "lan" ]; then
+    ip="$(python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('8.8.8.8', 80)); print(s.getsockname()[0])" 2>/dev/null || true)"
+    [ -n "$ip" ] && echo "  LAN:   http://$ip:$port"
+    echo
+    echo "Team sharing requires a login. Create the first account from the Relink window on this machine"
+    echo "(top bar, connection status), or with curl:"
+    echo "  curl -X POST http://127.0.0.1:$port/api/auth/register -H 'Content-Type: application/json' \\"
+    echo "       -d '{\"username\":\"you\",\"password\":\"at-least-8-chars\",\"role\":\"lead\"}'"
+    echo "Only use this on a network you trust, and never forward the port to the internet."
+  fi
+  echo
+  echo "Logs: relink.log    Stop: Ctrl-C"
+
+  wait "$pid" || true
+  if [ -f "$RELINK_RESTART_FILE" ]; then
+    next="$(tr -d '[:space:]' < "$RELINK_RESTART_FILE")"
+    rm -f "$RELINK_RESTART_FILE"
+    case "$next" in
+      local|lan) mode="$next"; echo; echo "Restarting in $mode mode..."; continue ;;
+    esac
+  fi
+  break
+done
