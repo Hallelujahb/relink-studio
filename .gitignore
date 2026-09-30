@@ -64,3 +64,8 @@ relink.log
 *.bak*
 relink-studio/src/App.jsx
 relink-api/data/*
+# Generated files (added by tidy-repo.sh)
+.relink_restart
+relink-api/venv/
+relink-api/data/
+relink-api/uploads/
