@@ -1,0 +1,25 @@
+name: Matching accuracy
+description: A match was wrong, or one that should exist was missed
+labels: ["matching"]
+body:
+  - type: markdown
+    attributes:
+      value: Please **anonymize** your sample. Don't paste data you aren't allowed to share.
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample rows
+      description: A few source and target names that should (or shouldn't) have matched.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and what happened?
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings used
+      description: Methods enabled, thresholds, normalization options. A downloaded config works too.
