@@ -1,7 +1,7 @@
 """
 Method C: semantic matching with a local sentence-embedding model.
 
-Optional dependency (`pip install -r relink-api/requirements-embedding.txt`).
+Optional dependency (`pip install -r backend/requirements-embedding.txt`).
 Importing this module never fails; calling method_c_embedding() without the
 package raises EmbeddingUnavailable, which routes.py records as a labeled
 warning instead of fabricating scores.
@@ -51,7 +51,7 @@ def method_c_embedding(source_rows, target_rows, source_id_col, source_match_col
         if not EMBEDDING_AVAILABLE:
             raise EmbeddingUnavailable(
                 "Method C requires the 'sentence-transformers' package. Install it with "
-                "`pip install -r relink-api/requirements-embedding.txt` and re-run."
+                "`pip install -r backend/requirements-embedding.txt` and re-run."
             )
         try:
             encoder = _load_encoder()

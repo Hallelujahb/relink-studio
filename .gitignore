@@ -1,4 +1,4 @@
-# --- Python (relink-api) ---
+# --- Python (backend) ---
 __pycache__/
 *.py[cod]
 *$py.class
@@ -28,16 +28,16 @@ htmlcov/
 # Logs
 *.log
 
-# relink-api runtime data: keep the folders (via .gitkeep), ignore what lands in them
-relink-api/data/*.sqlite3
-relink-api/uploads/*
-!relink-api/uploads/.gitkeep
-!relink-api/data/.gitkeep
+# backend runtime data: keep the folders (via .gitkeep), ignore what lands in them
+backend/data/*.sqlite3
+backend/uploads/*
+!backend/uploads/.gitkeep
+!backend/data/.gitkeep
 
 # --- Node / frontend (relink-studio) ---
-relink-studio/node_modules/
-relink-studio/dist/
-relink-studio/.vite/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -58,14 +58,13 @@ Thumbs.db
 # --- Bundled sample datasets not meant to be published ---
 test-dataset/*.csv
 *.pyc
-relink-api/data/*.sqlite3*
+backend/data/*.sqlite3*
 node_modules/
 relink.log
 *.bak*
-relink-studio/src/App.jsx
-relink-api/data/*
+backend/data/*
 # Generated files (added by tidy-repo.sh)
 .relink_restart
-relink-api/venv/
-relink-api/data/
-relink-api/uploads/
+backend/venv/
+backend/data/
+backend/uploads/
