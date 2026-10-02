@@ -68,8 +68,8 @@ Each method is an independent opinion on the best target for a row.
 Install the optional ones with:
 
 ```bash
-relink-api/venv/bin/pip install -r relink-api/requirements-embedding.txt   # Method C (pulls in PyTorch)
-relink-api/venv/bin/pip install -r relink-api/requirements-optional.txt    # Method E, PostgreSQL, ClickHouse
+backend/venv/bin/pip install -r backend/requirements-embedding.txt   # Method C (pulls in PyTorch)
+backend/venv/bin/pip install -r backend/requirements-optional.txt    # Method E, PostgreSQL, ClickHouse
 ```
 
 Notes on the optional methods:
@@ -111,7 +111,7 @@ Set these as environment variables before `./relink.sh`. An explicit value alway
 | `RELINK_ALLOWED_HOSTS` | empty | Extra hostnames accepted in local mode |
 | `RELINK_CORS_ORIGINS` | `http://localhost:5173` | Only matters with the Vite dev server |
 | `RELINK_MAX_UPLOAD_BYTES` | 50 MB | |
-| `RELINK_DATA_DIR`, `RELINK_UPLOAD_DIR` | `relink-api/data`, `relink-api/uploads` | |
+| `RELINK_DATA_DIR`, `RELINK_UPLOAD_DIR` | `backend/data`, `backend/uploads` | |
 | `RELINK_LIBRARY_DIR` | unset | Shared folder teammates can import files from |
 | `RELINK_UPLOAD_EXPIRY_DAYS` | off | Sweeps old unreferenced uploads hourly |
 | `RELINK_NOMINATIM_USER_AGENT` | placeholder | Set to your name plus an email or URL before real use |
@@ -123,12 +123,12 @@ Import a table from PostgreSQL, ClickHouse or MySQL as a file. Install drivers w
 
 ## API and command line
 
-The frontend uses the core flow: upload, projects, run, jobs, review, bulk, undo, export, audit, geocode and login. The backend also exposes data profiling, schema drift, blocking diagnostics, run metrics, precision and recall against ground truth, review sampling, structured decision history, row explanations, exceptions, project deletion and storage cleanup. See `relink-api/openapi.yaml` and `relink-api/README.md`.
+The frontend uses the core flow: upload, projects, run, jobs, review, bulk, undo, export, audit, geocode and login. The backend also exposes data profiling, schema drift, blocking diagnostics, run metrics, precision and recall against ground truth, review sampling, structured decision history, row explanations, exceptions, project deletion and storage cleanup. See `backend/openapi.yaml` and `backend/README.md`.
 
 Offline tools that work on local files:
 
 ```bash
-cd relink-api
+cd backend
 venv/bin/python -m app.cli_tools profile data.csv
 venv/bin/python -m app.cli_tools validate-config config.json
 venv/bin/python -m app.cli_tools schema-diff old.json new.json
@@ -138,11 +138,11 @@ venv/bin/python -m app.cli_tools check-capabilities
 ## Docker
 
 ```bash
-docker build -t relink-api relink-api
-docker run -p 127.0.0.1:5000:5000 -v $(pwd)/data:/srv/data -v $(pwd)/uploads:/srv/uploads relink-api
+docker build -t relink-backend backend
+docker run -p 127.0.0.1:5000:5000 -v $(pwd)/data:/srv/data -v $(pwd)/uploads:/srv/uploads relink-backend
 ```
 
-The image serves the API. To serve the UI from the same container, mount a built `relink-studio/dist` and set `RELINK_FRONTEND_DIST`. Publish on `127.0.0.1` unless you have set up auth and a proxy.
+The image serves the API. To serve the UI from the same container, mount a built `frontend/dist` and set `RELINK_FRONTEND_DIST`. Publish on `127.0.0.1` unless you have set up auth and a proxy.
 
 ## Status and scope
 
@@ -161,17 +161,17 @@ Good to know:
 
 ## Developing
 
-The UI lives in one file on purpose: `relink_studio.jsx`. `./relink.sh` copies it to `relink-studio/src/App.jsx`, which is generated and git-ignored. For hot reload, run the backend with `./relink.sh` and in another terminal:
+The UI is a standard Vite and React project in `frontend/`. For hot reload, run the backend with `./relink.sh` and in another terminal:
 
 ```bash
-cd relink-studio
+cd frontend
 npm run dev      # http://localhost:5173, talks to the backend on port 5000
 ```
 
 Tests:
 
 ```bash
-cd relink-api
+cd backend
 venv/bin/python -m pip install pytest
 venv/bin/python -m pytest tests -v
 ```
@@ -179,12 +179,12 @@ venv/bin/python -m pytest tests -v
 ```
 relink-studio/
   relink.sh                install, build and run
-  relink_studio.jsx        the whole frontend
-  relink-api/              Flask backend
+  backend/                 Flask API
     app/                   matching, routes, auth, db, parsers, connectors, tools
     tests/
     openapi.yaml
-  relink-studio/           Vite project the script builds into
+  frontend/                React and Vite UI
+    src/                   App.jsx is the main component
 ```
 
 ## Contributing
@@ -193,8 +193,8 @@ Bug reports, new matching methods, UI fixes and docs are all welcome. Everyone w
 
 - **Bugs.** Say what happened and what you expected. For matching accuracy, include a small anonymized sample of source and target rows.
 - **Pull requests.** Branch off `main`, keep one logical change per PR, and check the pipeline still runs end to end.
-- **New method.** Add a function in `relink-api/app/matching.py` and wire it into the job runner in `routes.py`, following the signature of the existing ones.
-- **Frontend.** Keep it in the single file unless there is a good reason to split it.
+- **New method.** Add a function in `backend/app/matching.py` and wire it into the job runner in `routes.py`, following the signature of the existing ones.
+- **Frontend.** Work inside `frontend/src`. Run `npm run dev` in `frontend/` for hot reload.
 - **Style.** Match the surrounding code and do not reformat unrelated lines.
 
 For big changes or anything touching the matching logic, open an issue first.

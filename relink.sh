@@ -10,9 +10,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-API="$ROOT/relink-api"
-WEB="$ROOT/relink-studio"
-JSX="$ROOT/relink_studio.jsx"
+API="$ROOT/backend"
+WEB="$ROOT/frontend"
 
 mode=local
 start=1
@@ -38,9 +37,8 @@ python3 -c 'import venv, ensurepip' 2>/dev/null \
   || die "python3-venv is missing. On Debian or Ubuntu: sudo apt install python3-venv"
 [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ] \
   || die "Node 20 or newer is required (found $(node -v))."
-[ -d "$API" ] || die "relink-api/ not found next to this script."
-[ -f "$WEB/package.json" ] || die "relink-studio/package.json not found next to this script."
-[ -f "$JSX" ] || die "relink_studio.jsx not found next to this script."
+[ -d "$API" ] || die "backend/ not found next to this script."
+[ -f "$WEB/package.json" ] || die "frontend/package.json not found next to this script."
 
 step "Backend"
 cd "$API"
@@ -65,8 +63,6 @@ fi
 
 step "Frontend"
 cd "$WEB"
-mkdir -p src
-cmp -s "$JSX" src/App.jsx || cp "$JSX" src/App.jsx
 if [ ! -d node_modules ] || [ package.json -nt node_modules ]; then
   npm install --no-audit --no-fund
   touch node_modules

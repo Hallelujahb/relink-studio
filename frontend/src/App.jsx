@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 
 /* ---------------------------------------------------------------------- */
 /* Backend wiring                                                        */
-/* Talks to the relink-api Flask backend (see ../relink-api). The base    */
+/* Talks to the Flask backend (see ../../backend). The base    */
 /* URL defaults to whatever host this page itself was loaded from (port   */
 /* 5000) rather than a hardcoded "localhost" -- that's what makes opening */
 /* this frontend from a teammate's machine against a --lan backend work   */
@@ -64,7 +64,7 @@ async function apiFetch(path, options = {}) {
     res = await fetch(`${_conn.base}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } });
   } catch (e) {
     throw new ApiError(
-      `Could not reach the backend at ${_conn.base}${path}. Is relink-api running, and is this address reachable ` +
+      `Could not reach the backend at ${_conn.base}${path}. Is the backend running, and is this address reachable ` +
       `from your machine? Check the connection status in the top bar -- in LAN mode the backend's CORS ` +
       `origins also need to include this frontend's address (RELINK_CORS_ORIGINS).`
     );
@@ -95,7 +95,7 @@ async function uploadFileToBackend(file) {
   return apiJson("/upload", { method: "POST", body: form });
 }
 
-/* GET /health is always unauthenticated by design (see relink-api), so   */
+/* GET /health is always unauthenticated by design (see backend/), so   */
 /* this never needs a token -- it's what powers the connection-status     */
 /* pill: which mode the backend is running in, and whether it requires    */
 /* sign-in at all.                                                       */
@@ -1567,7 +1567,7 @@ function TabHierarchyMethods(props) {
           />
           <MethodCard
             name={METHOD_META.C.label} engine="local sentence-embedding model" accent={METHOD_META.C.accent}
-            description="Semantic matching via a local sentence-transformers model, good for meaning gaps rather than spelling gaps. Needs the optional backend package (pip install -r relink-api/requirements-embedding.txt); the first run downloads the model once unless RELINK_EMBEDDING_MODEL points at a local folder."
+            description="Semantic matching via a local sentence-transformers model, good for meaning gaps rather than spelling gaps. Needs the optional backend package (pip install -r backend/requirements-embedding.txt); the first run downloads the model once unless RELINK_EMBEDDING_MODEL points at a local folder."
             warning="Weak on close spelling variants. Can repeatedly collapse distinct records onto the same wrong neighbor. Recommended as a secondary signal, not primary."
             enabled={methodC} onToggle={() => setMethodC(!methodC)}
           />
@@ -2286,7 +2286,7 @@ function TabReviewQueue(props) {
             <button
               onClick={() => { setToast(`Looking up "${selected.sourceName}" via Nominatim (OpenStreetMap)...`); geocodeLookup(selected.sourceName); }}
               className="btn btn-ghost text-sm font-medium px-3 py-2 text-left"
-              title="One-off geocoding lookup for stubborn cases, calls the real relink-api /api/geocode endpoint. Not run in bulk, Nominatim is rate-limited to 1 request/second."
+              title="One-off geocoding lookup for stubborn cases, calls the real backend /api/geocode endpoint. Not run in bulk, Nominatim is rate-limited to 1 request/second."
             >
               Look up name via Nominatim
             </button>

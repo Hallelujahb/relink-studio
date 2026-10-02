@@ -18,12 +18,12 @@ You need Python 3.10+ and Node 20+.
 
 For hot reload on the frontend, keep `./relink.sh` running and in another terminal:
 
-    cd relink-studio
+    cd frontend
     npm run dev
 
 ## Running the tests
 
-    cd relink-api
+    cd backend
     venv/bin/python -m pip install pytest
     venv/bin/python -m pytest tests -v
 
@@ -39,8 +39,8 @@ Please make sure they pass before you open a PR, and add a test if you fix a bug
 
 ## Where things live
 
-- **New matching method:** add a function in `relink-api/app/matching.py` and wire it into the job runner in `relink-api/app/routes.py`, following the signature of the existing ones.
-- **Frontend:** it lives in one file on purpose, `relink_studio.jsx`. Please keep it that way unless there's a good reason. `relink-studio/src/App.jsx` is generated, so don't edit it.
+- **New matching method:** add a function in `backend/app/matching.py` and wire it into the job runner in `backend/app/routes.py`, following the signature of the existing ones.
+- **Frontend:** the UI is a Vite and React project in `frontend/`. The main component is `frontend/src/App.jsx`.
 
 ## Reporting bugs
 
