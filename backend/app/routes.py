@@ -347,6 +347,7 @@ def get_config(project_id):
 
 
 @bp.route("/projects/<project_id>/config", methods=["POST"])
+@require_lead_when_auth
 def update_config(project_id):
     conn = get_conn()
     if not conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone():

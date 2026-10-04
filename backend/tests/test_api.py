@@ -185,3 +185,21 @@ def test_delete_upload_succeeds_when_unreferenced(client, fixtures_dir):
     src = _upload(client, fixtures_dir, "source.csv")
     resp = client.delete(f"/api/upload/{src['file_id']}")
     assert resp.status_code == 204
+
+
+def test_update_config_requires_lead_when_auth(app, client, fixtures_dir):
+    client.post("/api/auth/register", json={"username": "lead1", "password": "password123", "role": "lead"})
+    client.post("/api/auth/register", json={"username": "rev1", "password": "password123"})
+    lead = client.post("/api/auth/login", json={"username": "lead1", "password": "password123"}).get_json()["token"]
+    rev = client.post("/api/auth/login", json={"username": "rev1", "password": "password123"}).get_json()["token"]
+    project_id = _create_and_run_project(client, fixtures_dir)
+
+    app.config["RELINK_REQUIRE_AUTH"] = True
+    cfg = {**BASE_CONFIG, "safety": {"require_approval_hierarchy": False}}
+    url = f"/api/projects/{project_id}/config"
+
+    resp = client.post(url, json=cfg, headers={"Authorization": f"Bearer {rev}"})
+    assert resp.status_code == 403
+
+    resp = client.post(url, json=cfg, headers={"Authorization": f"Bearer {lead}"})
+    assert resp.status_code == 200
