@@ -16,7 +16,8 @@ TARGET = [
 def test_analyze_blocking_basic_shape():
     result = bd.analyze_blocking(SOURCE, TARGET, "id", "name", "tid", "tname", CFG)
     assert "total_target_blocks" in result
-    assert result["total_target_blocks"] == 2
+    # "spr" and "twp" (Springfield Twp tokens) plus "riv" (Riverside).
+    assert result["total_target_blocks"] == 3
 
 
 def test_analyze_blocking_flags_excluded_source_rows():

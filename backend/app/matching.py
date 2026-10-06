@@ -76,20 +76,46 @@ def normalize(value, matching_cfg):
 
 
 def _blocking_key(norm_value):
-    """First 3 characters of the normalized value. Only candidates sharing a key are compared."""
+    """First 3 characters of the normalized value (the whole-name key)."""
     return norm_value[:3] if norm_value else ""
 
 
+def _blocking_keys(norm_value):
+    """All blocking keys for a normalized value: the whole-name prefix plus the
+    3-character prefix of every token of 3+ characters. Token keys let
+    "The Riverside Clinic", "Riverside Clinic" and "Clinic Riverside" meet, which
+    a whole-name prefix alone never allows. Empty input yields no keys."""
+    if not norm_value:
+        return set()
+    keys = {_blocking_key(norm_value)}
+    keys.update(t[:3] for t in norm_value.split(" ") if len(t) >= 3)
+    return keys
+
+
 def _build_blocks(rows, id_col, match_col, matching_cfg):
+    """Maps blocking key -> candidate records. A record sits in one block per
+    key it has, so use _candidates() to read them without duplicates."""
     blocks = {}
     for row in rows:
         norm = normalize(row.get(match_col), matching_cfg)
         if not norm:
             continue  # a name that normalizes to nothing must never match anything
-        blocks.setdefault(_blocking_key(norm), []).append(
-            {"id": row.get(id_col), "name": row.get(match_col), "norm": norm, "raw": row}
-        )
+        cand = {"id": row.get(id_col), "name": row.get(match_col), "norm": norm, "raw": row}
+        for key in _blocking_keys(norm):
+            blocks.setdefault(key, []).append(cand)
     return blocks
+
+
+def _candidates(src_norm, blocks):
+    """Distinct target candidates sharing any blocking key with src_norm, in a
+    stable order (sorted key, then insertion order)."""
+    seen, out = set(), []
+    for key in sorted(_blocking_keys(src_norm)):
+        for cand in blocks.get(key, []):
+            if id(cand) not in seen:
+                seen.add(id(cand))
+                out.append(cand)
+    return out
 
 
 def _no_match():
@@ -105,7 +131,7 @@ def method_a_fuzzy(source_rows, target_rows, source_id_col, source_match_col,
         src_norm = normalize(row.get(source_match_col), matching_cfg)
         best = None
         if src_norm:
-            for cand in target_blocks.get(_blocking_key(src_norm), []):
+            for cand in _candidates(src_norm, target_blocks):
                 score = SequenceMatcher(None, src_norm, cand["norm"]).ratio()
                 if score < blocking_floor:
                     continue
@@ -129,7 +155,7 @@ def method_b_token_overlap(source_rows, target_rows, source_id_col, source_match
         src_tokens = _tokens(src_norm)
         best = None
         if src_norm:
-            for cand in target_blocks.get(_blocking_key(src_norm), []):
+            for cand in _candidates(src_norm, target_blocks):
                 cand_tokens = _tokens(cand["norm"])
                 union = src_tokens | cand_tokens
                 score = len(src_tokens & cand_tokens) / len(union) if union else 0.0

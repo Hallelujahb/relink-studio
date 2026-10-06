@@ -1,9 +1,9 @@
 """
 Explains one review row: which method scored what, against which normalized
 strings, and which thresholds it did or did not clear. It reuses normalize()
-and _blocking_key() from app.matching, so it cannot drift from the matcher.
+and _blocking_key()/_blocking_keys() from app.matching, so it cannot drift from the matcher.
 """
-from .matching import _blocking_key, normalize
+from .matching import _blocking_key, _blocking_keys, normalize
 
 
 def explain_review_row(row, source_value, target_values_by_id, matching_cfg, thresholds, safety):
@@ -19,6 +19,7 @@ def explain_review_row(row, source_value, target_values_by_id, matching_cfg, thr
 
     source_norm = normalize(source_value, matching_cfg)
     source_block_key = _blocking_key(source_norm)
+    source_block_keys = sorted(_blocking_keys(source_norm))
 
     per_method = {}
     for letter, m in row["methods"].items():
@@ -65,7 +66,7 @@ def explain_review_row(row, source_value, target_values_by_id, matching_cfg, thr
         "approved": row["approved"],
         "chosenMethod": row.get("chosenMethod"),
         "thresholds": {"auto_approve": auto_approve, "needs_review": needs_review},
-        "blocking": {"source_blocking_key": source_block_key},
+        "blocking": {"source_blocking_key": source_block_key, "source_blocking_keys": source_block_keys},
         "methods": per_method,
         "reasons": reasons,
     }
